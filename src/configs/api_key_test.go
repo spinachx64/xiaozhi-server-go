@@ -17,12 +17,12 @@ func TestResolveAPIKey(t *testing.T) {
 		fails                bool
 	}{
 		{"literal", "sk-literal-test", "", "sk-literal-test", false},
-		{"bare variable", "CODEX_LLM_KEY_TEST", "", "sk-test-resolved", false},
+		{"bare name stays literal", "CODEX_LLM_KEY_TEST", "", "CODEX_LLM_KEY_TEST", false},
 		{"explicit expression", "${CODEX_LLM_KEY_TEST}", "", "sk-test-resolved", false},
 		{"explicit field", "", "CODEX_LLM_KEY_TEST", "sk-test-resolved", false},
 		{"explicit field wins", "sk-other", "CODEX_LLM_KEY_TEST", "sk-test-resolved", false},
-		{"unbound bare name preserves literal", "CODEX_LLM_ABSENT_TEST", "", "CODEX_LLM_ABSENT_TEST", false},
-		{"empty variable", "CODEX_LLM_EMPTY_TEST", "", "", true},
+		{"empty expression variable", "${CODEX_LLM_EMPTY_TEST}", "", "", true},
+		{"empty field variable", "", "CODEX_LLM_EMPTY_TEST", "", true},
 		{"missing expression", "${CODEX_LLM_ABSENT_TEST}", "", "", true},
 		{"missing explicit field", "sk-other", "CODEX_LLM_ABSENT_TEST", "", true},
 		{"invalid expression", "${CODEX_LLM_KEY_TEST", "", "", true},

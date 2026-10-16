@@ -329,9 +329,13 @@ func (s *DefaultUserService) testVLLLMProvider(ctx context.Context, name, subTyp
 	if err != nil {
 		return liveProviderTestResult{}, err
 	}
+	apiKey, err := configs.ResolveAPIKey(cfg.APIKey, cfg.EnvKey)
+	if err != nil {
+		return liveProviderTestResult{}, fmt.Errorf("视觉模型密钥解析失败：%w", err)
+	}
 	security := cfg.Security
 	normalizeVLLLMTestSecurity(&security)
-	provider, err := vlllm.NewProvider(&vlllm.Config{Type: subType, ModelName: cfg.ModelName, BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Temperature: cfg.Temperature, MaxTokens: cfg.MaxTokens, TopP: cfg.TopP, Security: security, Data: cfg.Extra}, s.logger)
+	provider, err := vlllm.NewProvider(&vlllm.Config{Type: subType, ModelName: cfg.ModelName, BaseURL: cfg.BaseURL, APIKey: apiKey, Temperature: cfg.Temperature, MaxTokens: cfg.MaxTokens, TopP: cfg.TopP, Security: security, Data: cfg.Extra}, s.logger)
 	if err == nil {
 		err = provider.Initialize()
 	}

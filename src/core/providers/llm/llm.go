@@ -18,6 +18,8 @@ type Config struct {
 	MaxTokens   int                    `yaml:"max_tokens,omitempty"`
 	TopP        float64                `yaml:"top_p,omitempty"`
 	Extra       map[string]interface{} `yaml:",inline"`
+	// LiteralKey 表示 APIKey 已是最终密钥（例如来自智能体覆盖），不再做环境变量解析。
+	LiteralKey bool `yaml:"-"`
 }
 
 // Provider LLM提供者接口
@@ -100,6 +102,10 @@ func ResolveConfig(config *Config) (*Config, error) {
 		return nil, fmt.Errorf("LLM config is required")
 	}
 	copy := *config
+	if copy.LiteralKey {
+		copy.EnvKey = ""
+		return &copy, nil
+	}
 	key, err := configs.ResolveAPIKey(copy.APIKey, copy.EnvKey)
 	if err != nil {
 		return nil, fmt.Errorf("resolve LLM API key: %w", err)

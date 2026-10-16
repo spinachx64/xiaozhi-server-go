@@ -11,9 +11,13 @@ var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ResolveAPIKey resolves credentials only at runtime. Callers must not persist
 // the result into the stored server/provider configuration.
-// env_key and ${NAME} are explicit references and fail if unset or empty.
-// A bare name resolves when the environment variable exists; otherwise it is
-// preserved as a literal key for compatibility with existing configurations.
+// Only explicit references are resolved: a non-empty env_key, or an api_key of
+// the form ${NAME}. Both fail if the variable is unset or empty. Any other value
+// is a literal key, so a key that merely looks like a variable name is never
+// swapped for process environment.
+//
+// Only call this for operator-controlled configuration (config file, admin
+// provider tables). Values from agents or other user input must stay literal.
 func ResolveAPIKey(value, envKey string) (string, error) {
 	value, envKey = strings.TrimSpace(value), strings.TrimSpace(envKey)
 	if envKey != "" {
@@ -24,14 +28,6 @@ func ResolveAPIKey(value, envKey string) (string, error) {
 			return "", fmt.Errorf("invalid API key environment reference; use ${NAME}")
 		}
 		return requiredEnvironment(value[2 : len(value)-1])
-	}
-	if environmentName.MatchString(value) {
-		if resolved, exists := os.LookupEnv(value); exists {
-			if resolved = strings.TrimSpace(resolved); resolved == "" {
-				return "", fmt.Errorf("API key environment variable %s is empty", value)
-			}
-			return resolved, nil
-		}
 	}
 	return value, nil
 }

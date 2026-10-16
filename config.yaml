@@ -22,7 +22,7 @@ transport:
   # WebSocket传输层
   websocket:
     enabled: true
-    ip: "10.3.131.74"
+    ip: "0.0.0.0"
     port: 8000
 
 # Web界面配置
@@ -32,8 +32,8 @@ web:
   # Web服务监听端口
   port: 8080
   # 由ota下发的WebSocket地址
-  websocket: ws://10.3.131.74:8000
-  vision: http://10.3.131.74:8080/api/vision
+  websocket: ws://你的ip:8000
+  vision: http://你的ip:8080/api/vision
   activate_text: "Amine AI Chat" # 发送激活码时携带的文本
 
 log:
@@ -97,9 +97,9 @@ local_mcp_fun:
 
 # 选择使用的模块
 selected_module:
-  ASR: AliyunASR
-  TTS: AliyunTTS
-  LLM: ChatGLMLLM
+  ASR: DoubaoASR
+  TTS: EdgeTTS
+  LLM: OllamaLLM
   VLLLM: ChatGLMVLLM
 
 # ASR配置
@@ -297,17 +297,18 @@ TTS:
         },
       ]
 
-# LLM api_key 支持直接密钥、已存在的环境变量名（如 QM_ENV_KEY）、或 "${QM_ENV_KEY}"。
-# 也可填写 env_key: QM_ENV_KEY（优先于 api_key）；显式引用缺失/为空会报错。
+# LLM / VLLLM 的 api_key 支持直接密钥或显式环境变量引用 "${NAME}"；
+# 也可填写 env_key: NAME（优先于 api_key）。引用的变量缺失或为空时初始化失败。
+# 仅配置文件中的引用会被解析；智能体或后台填写的值一律按字面密钥处理。
 LLM:
   ChatGLMLLM:
     # 定义LLM API类型
     type: openai
     # glm-4-flash 是免费的，但是还是需要注册填写api_key的
     # 可在这里找到你的api key https://bigmodel.cn/usercenter/proj-mgmt/apikeys
-    model_name: deepseek-flash
-    url: https://token-hub.qiseek.com/v1
-    api_key: QM_ENV_KEY
+    model_name: glm-4-flash
+    url: https://open.bigmodel.cn/api/paas/v4/
+    api_key: 你的api_key
   OllamaLLM:
     # 定义LLM API类型
     type: ollama
@@ -347,9 +348,9 @@ CMD_exit:
 VLLLM:
   ChatGLMVLLM:
     type: openai
-    model_name: deepseek-flash # 智谱AI的视觉模型
-    url: https://token-hub.qiseek.com/v1
-    api_key: QM_ENV_KEY
+    model_name: glm-4v-flash # 智谱AI的视觉模型
+    url: https://open.bigmodel.cn/api/paas/v4/
+    api_key: 你的api_key
     max_tokens: 4096
     temperature: 0.7
     top_p: 0.9

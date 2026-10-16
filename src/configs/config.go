@@ -163,6 +163,7 @@ type VLLMConfig struct {
 	ModelName   string                 `yaml:"model_name"  json:"model_name"`  // 模型名称，使用支持视觉的模型
 	BaseURL     string                 `yaml:"url"         json:"url"`         // API地址
 	APIKey      string                 `yaml:"api_key"     json:"api_key"`     // API密钥
+	EnvKey      string                 `yaml:"env_key,omitempty" json:"env_key,omitempty"` // 显式环境变量名，优先于 api_key
 	Temperature float64                `yaml:"temperature" json:"temperature"` // 温度参数
 	MaxTokens   int                    `yaml:"max_tokens"  json:"max_tokens"`  // 最大令牌数
 	TopP        float64                `yaml:"top_p"       json:"top_p"`       // TopP参数

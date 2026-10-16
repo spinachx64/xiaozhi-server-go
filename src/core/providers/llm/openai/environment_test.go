@@ -52,9 +52,13 @@ func TestEnvironmentKeyReachesHTTPWithoutChangingStoredConfig(t *testing.T) {
 			before := config.ToString()
 			for _, key := range []string{"sk-http-test-one", "sk-http-test-two"} {
 				t.Setenv("CODEX_LLM_HTTP_KEY_TEST", key)
-				if mode == "literal" {
+				switch mode {
+				case "literal":
 					want.Store("sk-http-literal")
-				} else {
+				case "bare":
+					// 裸变量名不再读取环境变量，按字面密钥发送。
+					want.Store("CODEX_LLM_HTTP_KEY_TEST")
+				default:
 					want.Store(key)
 				}
 				created, err := provider.NewLLMFactory("TestLLM", config, logger).Create()

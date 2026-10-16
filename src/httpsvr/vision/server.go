@@ -62,13 +62,18 @@ func (s *DefaultVisionService) initVLLMProviders() error {
 	}
 
 	vlllmConfig := s.config.VLLLM[selected_vlllm]
+	apiKey, err := configs.ResolveAPIKey(vlllmConfig.APIKey, vlllmConfig.EnvKey)
+	if err != nil {
+		s.logger.Warn(fmt.Sprintf("解析VLLLM API Key 失败: %v", err))
+		return err
+	}
 
 	// 创建VLLLM provider配置
 	providerConfig := &vlllm.Config{
 		Type:        vlllmConfig.Type,
 		ModelName:   vlllmConfig.ModelName,
 		BaseURL:     vlllmConfig.BaseURL,
-		APIKey:      vlllmConfig.APIKey,
+		APIKey:      apiKey,
 		Temperature: vlllmConfig.Temperature,
 		MaxTokens:   vlllmConfig.MaxTokens,
 		TopP:        vlllmConfig.TopP,

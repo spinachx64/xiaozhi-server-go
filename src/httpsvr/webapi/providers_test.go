@@ -95,13 +95,18 @@ func TestDashScopeTTSFieldsAndEnvironment(t *testing.T) {
 
 func TestLLMEnvironmentReferenceValidation(t *testing.T) {
 	t.Setenv("CODEX_LLM_WEB_KEY_TEST", "sk-web-test-value")
-	config := map[string]interface{}{"type": "openai", "url": "https://example.test/v1", "model_name": "test", "api_key": "CODEX_LLM_WEB_KEY_TEST"}
+	config := map[string]interface{}{"type": "openai", "url": "https://example.test/v1", "model_name": "test", "api_key": "${CODEX_LLM_WEB_KEY_TEST}"}
 	if missing := missingProviderTestFields("LLM", "openai", config); len(missing) != 0 {
 		t.Fatal(missing)
 	}
 	resolved := withProviderEnvironment("LLM", "openai", config)
-	if resolved["api_key"] != "sk-web-test-value" || config["api_key"] != "CODEX_LLM_WEB_KEY_TEST" {
+	if resolved["api_key"] != "sk-web-test-value" || config["api_key"] != "${CODEX_LLM_WEB_KEY_TEST}" {
 		t.Fatal("validation mutated credential reference")
+	}
+	// 裸变量名不再读取环境变量，按字面密钥处理。
+	config["api_key"] = "CODEX_LLM_WEB_KEY_TEST"
+	if resolved := withProviderEnvironment("LLM", "openai", config); resolved["api_key"] != "CODEX_LLM_WEB_KEY_TEST" {
+		t.Fatal("bare name was resolved from environment")
 	}
 	config["api_key"] = ""
 	config["env_key"] = "CODEX_LLM_WEB_KEY_TEST"

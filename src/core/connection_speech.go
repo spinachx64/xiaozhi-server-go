@@ -74,6 +74,26 @@ func (h *ConnectionHandler) newSpeechContext(round int) (context.Context, func()
 	return ctx, release, true
 }
 
+// newGenerationContext registers an LLM generation with cancelSpeech so that
+// barge-in or a new round also stops the model stream and tool calls. Unlike
+// newSpeechContext it does not consult serverVoiceStop, which is only cleared
+// once the model starts responding.
+func (h *ConnectionHandler) newGenerationContext(parent context.Context) (context.Context, func()) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	h.speechMu.Lock()
+	defer h.speechMu.Unlock()
+	if h.speechCancels == nil {
+		h.speechCancels = make(map[uint64]context.CancelFunc)
+	}
+	h.speechNext++
+	id := h.speechNext
+	h.speechCancels[id] = cancel
+	return ctx, func() { cancel(); h.speechMu.Lock(); delete(h.speechCancels, id); h.speechMu.Unlock() }
+}
+
 func (h *ConnectionHandler) cancelSpeech() {
 	h.speechMu.Lock()
 	for _, cancel := range h.speechCancels {
@@ -149,18 +169,17 @@ func (h *ConnectionHandler) produceStreamingSpeech(provider providers.PCMStreami
 		release()
 		return
 	}
+	relay := startChunkRelay(ctx, s.chunks)
 	path, err := provider.StreamPCM(ctx, text, func(data []byte) error {
 		if h.speechObsolete(round) {
 			cancel()
 			return context.Canceled
 		}
-		copy := append([]byte(nil), data...)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case s.chunks <- copy:
-			return nil
+		if err := ctx.Err(); err != nil {
+			return err
 		}
+		relay.push(append([]byte(nil), data...))
+		return nil
 	})
 	if err != nil && !errors.Is(err, context.Canceled) {
 		h.LogError(fmt.Sprintf("流式 TTS 失败: %v", err))
@@ -171,7 +190,75 @@ func (h *ConnectionHandler) produceStreamingSpeech(provider providers.PCMStreami
 		}
 	}
 	s.result <- synthesisResult{path: path, err: err}
-	close(s.chunks)
+	relay.finish()
+}
+
+// chunkRelay decouples cloud synthesis from playback pacing: the provider
+// callback never blocks on the device, so the provider timeout covers only
+// synthesis and the TTS worker can move on to the next sentence. Memory is
+// bounded by the provider's maximum audio size per sentence.
+type chunkRelay struct {
+	mu     sync.Mutex
+	queue  [][]byte
+	done   bool
+	signal chan struct{}
+}
+
+func startChunkRelay(ctx context.Context, out chan<- []byte) *chunkRelay {
+	r := &chunkRelay{signal: make(chan struct{}, 1)}
+	go func() {
+		defer close(out)
+		for {
+			r.mu.Lock()
+			var next []byte
+			has := len(r.queue) > 0
+			if has {
+				next = r.queue[0]
+				r.queue[0] = nil
+				r.queue = r.queue[1:]
+			}
+			done := r.done
+			r.mu.Unlock()
+			if has {
+				select {
+				case out <- next:
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
+			if done {
+				return
+			}
+			select {
+			case <-r.signal:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return r
+}
+
+func (r *chunkRelay) push(data []byte) {
+	r.mu.Lock()
+	r.queue = append(r.queue, data)
+	r.mu.Unlock()
+	r.wake()
+}
+
+func (r *chunkRelay) finish() {
+	r.mu.Lock()
+	r.done = true
+	r.mu.Unlock()
+	r.wake()
+}
+
+func (r *chunkRelay) wake() {
+	select {
+	case r.signal <- struct{}{}:
+	default:
+	}
 }
 
 func (h *ConnectionHandler) discardStreamingResult(s *streamingSpeech) {

@@ -409,19 +409,24 @@ func (h *ConnectionHandler) checkLLMProvider(agent *models.Agent, config *config
 		if cfg, ok := config.LLM[agentLLMName]; !ok {
 			h.LogError(fmt.Sprintf("Agent %d 的 LLM 类型 %s 不存在", h.agentID, agentLLMName))
 		} else {
-			if apiKey != "" {
-				cfg.APIKey = apiKey // 使用Agent的API密钥
-				cfg.EnvKey = ""     // 智能体覆盖也可以是环境变量名；不再使用全局 env_key。
-			}
 			if baseUrl != "" {
 				cfg.BaseURL = baseUrl // 使用Agent的BaseURL
 			}
-			current := getter.Config()
-			resolvedKey, err := configs.ResolveAPIKey(cfg.APIKey, cfg.EnvKey)
-			if err != nil {
-				h.LogError(fmt.Sprintf("解析智能体 LLM API Key 失败: %v", err))
-				return
+			var resolvedKey string
+			if apiKey != "" {
+				// 智能体字段来自用户输入，按字面密钥处理，不能借此读取服务进程环境变量。
+				cfg.APIKey = apiKey
+				cfg.EnvKey = ""
+				resolvedKey = apiKey
+			} else {
+				var err error
+				resolvedKey, err = configs.ResolveAPIKey(cfg.APIKey, cfg.EnvKey)
+				if err != nil {
+					h.LogError(fmt.Sprintf("解析 LLM API Key 失败: %v", err))
+					return
+				}
 			}
+			current := getter.Config()
 			// 同名提供者也可能在启动后从数据库载入了新密钥或地址，必须重建实例。
 			needsRecreate := llmName != agentLLMName || current.Type != cfg.Type || current.ModelName != cfg.ModelName || current.BaseURL != cfg.BaseURL || current.APIKey != resolvedKey
 			if needsRecreate {
@@ -436,6 +441,7 @@ func (h *ConnectionHandler) checkLLMProvider(agent *models.Agent, config *config
 					MaxTokens:   cfg.MaxTokens,
 					TopP:        cfg.TopP,
 					Extra:       cfg.Extra,
+					LiteralKey:  apiKey != "",
 				}
 				newllm, err := llm.Create(cfg.Type, llmCfg)
 				if err != nil {
@@ -790,6 +796,8 @@ func (h *ConnectionHandler) handleChatMessage(ctx context.Context, text string) 
 func (h *ConnectionHandler) genResponseByLLM(ctx context.Context, messages []providers.Message, round int) error {
 	h.beginSpeechGeneration(round)
 	defer h.endSpeechGeneration(round)
+	ctx, releaseGeneration := h.newGenerationContext(ctx)
+	defer releaseGeneration()
 	defer func() {
 		if r := recover(); r != nil {
 			h.LogError(fmt.Sprintf("genResponseByLLM发生panic: %v", r))
@@ -951,14 +959,14 @@ func (h *ConnectionHandler) genResponseByLLM(ctx context.Context, messages []pro
 				}
 				// 判断result 是否是types.ActionResponse类型
 				if actionResult, ok := result.(types.ActionResponse); ok {
-					h.handleFunctionResult(actionResult, functionCallData, textIndex)
+					h.handleFunctionResult(ctx, actionResult, functionCallData, textIndex)
 				} else {
 					h.LogInfo(fmt.Sprintf("MCP函数调用结果: %v", result))
 					actionResult := types.ActionResponse{
 						Action: types.ActionTypeReqLLM, // 动作类型
 						Result: result,                 // 动作产生的结果
 					}
-					h.handleFunctionResult(actionResult, functionCallData, textIndex)
+					h.handleFunctionResult(ctx, actionResult, functionCallData, textIndex)
 				}
 
 			} else {
@@ -1032,7 +1040,21 @@ func (h *ConnectionHandler) addToolCallMessage(toolResultText string, functionCa
 	})
 }
 
-func (h *ConnectionHandler) handleFunctionResult(result types.ActionResponse, functionCallData map[string]interface{}, textIndex int) {
+// maxToolCallDepth 限制单轮内“工具结果 -> 再次请求 LLM”的递归次数，
+// 避免模型反复调用 skill/MCP 工具导致无限循环。
+const maxToolCallDepth = 5
+
+type toolDepthKey struct{}
+
+func nextToolDepth(ctx context.Context) (context.Context, bool) {
+	depth, _ := ctx.Value(toolDepthKey{}).(int)
+	if depth >= maxToolCallDepth {
+		return ctx, false
+	}
+	return context.WithValue(ctx, toolDepthKey{}, depth+1), true
+}
+
+func (h *ConnectionHandler) handleFunctionResult(ctx context.Context, result types.ActionResponse, functionCallData map[string]interface{}, textIndex int) {
 	switch result.Action {
 	case types.ActionTypeError:
 		h.LogError(fmt.Sprintf("函数调用错误: %v", result.Result))
@@ -1051,7 +1073,16 @@ func (h *ConnectionHandler) handleFunctionResult(result types.ActionResponse, fu
 		text, ok := result.Result.(string)
 		if ok && len(text) > 0 {
 			h.addToolCallMessage(text, functionCallData)
-			h.genResponseByLLM(context.Background(), h.dialogueManager.GetLLMDialogue(), h.currentRound())
+			if ctx.Err() != nil {
+				return // 本轮已被打断
+			}
+			next, ok := nextToolDepth(ctx)
+			if !ok {
+				h.LogError(fmt.Sprintf("工具调用超过最大深度 %d，停止继续请求 LLM", maxToolCallDepth))
+				h.SystemSpeak("抱歉，这个请求处理步骤太多了，请换个说法再试")
+				return
+			}
+			h.genResponseByLLM(next, h.dialogueManager.GetLLMDialogue(), h.currentRound())
 
 		} else {
 			h.LogError(fmt.Sprintf("函数调用结果解析失败: %v", result.Result))
@@ -1258,7 +1289,11 @@ func (h *ConnectionHandler) SpeakAndPlay(text string, textIndex int, round int) 
 func (h *ConnectionHandler) clearSpeakStatus() {
 	h.LogInfo("[服务端] [讲话状态] 已清除")
 	h.tts_last_text_index.Store(int64(-1))
-	h.providers.asr.Reset() // 重置ASR状态
+	// realtime 模式下用户可能在播报期间已开始下一句，重置会丢掉这段识别。
+	// 该模式由 OnAsrResult 在每句结束时自行重置。
+	if h.clientListenMode != "realtime" {
+		h.providers.asr.Reset() // 重置ASR状态
+	}
 }
 
 func (h *ConnectionHandler) closeOpusDecoder() {

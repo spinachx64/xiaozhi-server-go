@@ -355,3 +355,28 @@ func TestRealtimeSpeechStartCancelsPlaybackWithoutResettingASR(t *testing.T) {
 		t.Fatal("barge-in reset ASR before the sentence finished")
 	}
 }
+
+func TestRealtimePlaybackEndKeepsNextUtterance(t *testing.T) {
+	h := realtimeHandler(t, "pcm")
+	h.clientListenMode = "realtime"
+	h.clearSpeakStatus()
+	if h.providers.asr.(*queuedASR).resets.Load() != 0 {
+		t.Fatal("playback end reset a realtime recognition the user may have started")
+	}
+	h.clientListenMode = "auto"
+	h.clearSpeakStatus()
+	if h.providers.asr.(*queuedASR).resets.Load() != 1 {
+		t.Fatal("non-realtime playback end must reset ASR")
+	}
+}
+
+func TestRealtimeRoundEndKeepsUserASRSession(t *testing.T) {
+	h := realtimeHandler(t, "pcm")
+	h.clientListenMode = "realtime"
+	h.beginSpeechGeneration(1)
+	h.endSpeechGeneration(1)
+	h.audioSentenceFinished(1, 1)
+	if h.providers.asr.(*queuedASR).resets.Load() != 0 {
+		t.Fatal("playback end reset a realtime ASR session the user may have started")
+	}
+}
