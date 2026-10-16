@@ -18,9 +18,12 @@ func (h *ConnectionHandler) handleMessage(messageType int, message []byte) error
 		h.clientTextQueue <- string(message)
 		return nil
 	case 2: // 二进制消息（音频数据）
+		if len(message) == 0 {
+			return nil
+		}
 		if h.clientAudioFormat == "pcm" {
 			// 直接将PCM数据放入队列
-			h.clientAudioQueue <- message
+			return h.enqueueAudio(audioInput{data: message})
 		} else if h.clientAudioFormat == "opus" {
 			// 检查是否初始化了opus解码器
 			if h.opusDecoder != nil {
@@ -28,18 +31,16 @@ func (h *ConnectionHandler) handleMessage(messageType int, message []byte) error
 				decodedData, err := h.opusDecoder.Decode(message)
 				if err != nil {
 					h.logger.Error(fmt.Sprintf("解码Opus音频失败: %v", err))
-					// 即使解码失败，也尝试将原始数据传递给ASR处理
-					h.clientAudioQueue <- message
+					return fmt.Errorf("解码 Opus 失败: %w", err)
 				} else {
 					// 解码成功，将PCM数据放入队列
 					h.logger.Debug(fmt.Sprintf("Opus解码成功: %d bytes -> %d bytes", len(message), len(decodedData)))
 					if len(decodedData) > 0 {
-						h.clientAudioQueue <- decodedData
+						return h.enqueueAudio(audioInput{data: decodedData})
 					}
 				}
 			} else {
-				// 没有解码器，直接传递原始数据
-				h.clientAudioQueue <- message
+				return fmt.Errorf("Opus 解码器尚未初始化，不能将压缩数据作为 PCM 发送")
 			}
 		}
 		return nil
@@ -170,12 +171,17 @@ func (h *ConnectionHandler) handleListenMessage(msgMap map[string]interface{}) e
 
 	switch state {
 	case "start":
+		h.providers.asr.SetListener(h)
 		if h.client_asr_text != "" && h.clientListenMode == "manual" {
 			h.clientAbortChat()
 		}
 		h.client_asr_text = ""
+		return h.enqueueAudio(audioInput{start: &asrInput{rate: h.clientAudioSampleRate, channels: h.clientAudioChannels, mode: h.clientListenMode}})
 	case "stop":
-		h.providers.asr.SendLastAudio([]byte{}) // 发送空数据标记结束
+		// Preserve FIFO with already received audio, including during cloud startup.
+		if err := h.enqueueAudio(audioInput{end: true}); err != nil {
+			return err
+		}
 		h.LogInfo("客户端停止语音识别")
 	case "detect":
 		text, hasText := msgMap["text"].(string)
@@ -211,8 +217,9 @@ func (h *ConnectionHandler) handleIotMessage(msgMap map[string]interface{}) erro
 // handleImageMessage 处理图片消息
 func (h *ConnectionHandler) handleImageMessage(ctx context.Context, msgMap map[string]interface{}) error {
 	// 增加对话轮次
-	h.talkRound++
-	currentRound := h.talkRound
+	h.cancelSpeech()
+	h.talkRound.Add(1)
+	currentRound := h.currentRound()
 	h.LogInfo(fmt.Sprintf("开始新的图片对话轮次: %d", currentRound))
 
 	// 检查是否有VLLLM Provider

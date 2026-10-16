@@ -35,6 +35,24 @@ import (
 
 type MCPResultHandler func(args interface{}) string
 
+type audioMessage struct {
+	filepath  string
+	text      string
+	round     int
+	textIndex int
+	stream    *streamingSpeech
+}
+
+type asrInput struct {
+	rate, channels int
+	mode           string
+}
+type audioInput struct {
+	data  []byte
+	start *asrInput
+	end   bool
+}
+
 // Connection 统一连接接口
 type Connection interface {
 	// 发送消息
@@ -117,13 +135,13 @@ type ConnectionHandler struct {
 
 	// 对话相关
 	dialogueManager     *chat.DialogueManager
-	tts_last_text_index int
+	tts_last_text_index atomic.Int64
 	client_asr_text     string // 客户端ASR文本
 	quickReplyCache     *utils.QuickReplyCache
 
 	// 并发控制
 	stopChan         chan struct{}
-	clientAudioQueue chan []byte
+	clientAudioQueue chan audioInput
 	clientTextQueue  chan string
 
 	// TTS任务队列
@@ -133,15 +151,18 @@ type ConnectionHandler struct {
 		textIndex int
 	}
 
-	audioMessagesQueue chan struct {
-		filepath  string
-		text      string
-		round     int // 轮次
-		textIndex int
-	}
+	audioMessagesQueue chan audioMessage
+	speechMu           sync.Mutex
+	speechNext         uint64
+	speechCancels      map[uint64]context.CancelFunc
+	generationRound    int
+	generationDepth    int
+	playedRound        int
+	playedIndex        int
+	stoppedRound       int
 
-	talkRound      int       // 轮次计数
-	roundStartTime time.Time // 轮次开始时间
+	talkRound      atomic.Int64 // 轮次计数，音频/LLM/ASR 协程并发读取
+	roundStartTime time.Time    // 轮次开始时间
 	// functions
 	functionRegister *function.FunctionRegistry
 	mcpManager       *mcp.Manager
@@ -163,34 +184,27 @@ func NewConnectionHandler(
 		logger:           logger,
 		clientListenMode: "auto",
 		stopChan:         make(chan struct{}),
-		clientAudioQueue: make(chan []byte, 100),
+		clientAudioQueue: make(chan audioInput, 100),
 		clientTextQueue:  make(chan string, 100),
 		ttsQueue: make(chan struct {
 			text      string
 			round     int // 轮次
 			textIndex int
 		}, 100),
-		audioMessagesQueue: make(chan struct {
-			filepath  string
-			text      string
-			round     int // 轮次
-			textIndex int
-		}, 100),
-
-		tts_last_text_index: -1,
-
-		talkRound: 0,
+		audioMessagesQueue: make(chan audioMessage, 100),
 
 		serverAudioFormat:        "opus", // 默认使用Opus格式
 		serverAudioSampleRate:    24000,
 		serverAudioChannels:      1,
 		serverAudioFrameDuration: 60,
 
-		ctx: ctx,
+		ctx:          ctx,
+		stoppedRound: -1,
 
 		headers: make(map[string]string),
 	}
 
+	handler.tts_last_text_index.Store(-1)
 	for key, values := range req.Header {
 		if len(values) > 0 {
 			handler.headers[key] = values[0] // 取第一个值
@@ -298,7 +312,7 @@ func (h *ConnectionHandler) checkTTSProvider(agent *models.Agent, config *config
 					continue
 				}
 				// h.LogInfo(fmt.Sprintf("用户 %d 的 TTS 提供者: %s, 配置: %v", userID, name, cfg))
-				config.TTS[name] = cfg // 更新配置
+				config.TTS[name] = configs.WithTTSDefaults(cfg) // 更新配置
 			}
 		} else {
 			h.LogError(fmt.Sprintf("获取用户 %d 的 TTS 提供者失败: %v", userID, err))
@@ -314,17 +328,10 @@ func (h *ConnectionHandler) checkTTSProvider(agent *models.Agent, config *config
 				bChangeTTSSucc := false
 				for name, cfg := range config.TTS {
 					if bSupport, newVoice2, _ := tts.IsSupportedVoice(agent.Voice, cfg.SupportedVoices); bSupport {
-						ttsCfg := &tts.Config{
-							Name:            name,
-							Type:            cfg.Type,
-							OutputDir:       cfg.OutputDir,
-							Voice:           newVoice2,
-							Format:          cfg.Format,
-							SampleRate:      h.serverAudioSampleRate,
-							AppID:           cfg.AppID,
-							Token:           cfg.Token,
-							Cluster:         cfg.Cluster,
-							SupportedVoices: cfg.SupportedVoices,
+						ttsCfg := tts.FromConfig(name, cfg)
+						ttsCfg.Voice = newVoice2
+						if ttsCfg.SampleRate == 0 {
+							ttsCfg.SampleRate = h.serverAudioSampleRate
 						}
 						newVoice = newVoice2
 						newtts, err := tts.Create(cfg.Type, ttsCfg, false)
@@ -402,15 +409,26 @@ func (h *ConnectionHandler) checkLLMProvider(agent *models.Agent, config *config
 		if cfg, ok := config.LLM[agentLLMName]; !ok {
 			h.LogError(fmt.Sprintf("Agent %d 的 LLM 类型 %s 不存在", h.agentID, agentLLMName))
 		} else {
-			if apiKey != "" {
-				cfg.APIKey = apiKey // 使用Agent的API密钥
-			}
 			if baseUrl != "" {
 				cfg.BaseURL = baseUrl // 使用Agent的BaseURL
 			}
+			var resolvedKey string
+			if apiKey != "" {
+				// 智能体字段来自用户输入，按字面密钥处理，不能借此读取服务进程环境变量。
+				cfg.APIKey = apiKey
+				cfg.EnvKey = ""
+				resolvedKey = apiKey
+			} else {
+				var err error
+				resolvedKey, err = configs.ResolveAPIKey(cfg.APIKey, cfg.EnvKey)
+				if err != nil {
+					h.LogError(fmt.Sprintf("解析 LLM API Key 失败: %v", err))
+					return
+				}
+			}
 			current := getter.Config()
 			// 同名提供者也可能在启动后从数据库载入了新密钥或地址，必须重建实例。
-			needsRecreate := llmName != agentLLMName || current.Type != cfg.Type || current.ModelName != cfg.ModelName || current.BaseURL != cfg.BaseURL || current.APIKey != cfg.APIKey
+			needsRecreate := llmName != agentLLMName || current.Type != cfg.Type || current.ModelName != cfg.ModelName || current.BaseURL != cfg.BaseURL || current.APIKey != resolvedKey
 			if needsRecreate {
 				llmCfg := &llm.Config{
 					Name:        agentLLMName,
@@ -418,10 +436,12 @@ func (h *ConnectionHandler) checkLLMProvider(agent *models.Agent, config *config
 					ModelName:   cfg.ModelName,
 					BaseURL:     cfg.BaseURL,
 					APIKey:      cfg.APIKey,
+					EnvKey:      cfg.EnvKey,
 					Temperature: cfg.Temperature,
 					MaxTokens:   cfg.MaxTokens,
 					TopP:        cfg.TopP,
 					Extra:       cfg.Extra,
+					LiteralKey:  apiKey != "",
 				}
 				newllm, err := llm.Create(cfg.Type, llmCfg)
 				if err != nil {
@@ -576,15 +596,46 @@ func (h *ConnectionHandler) processClientTextMessagesCoroutine() {
 
 // processClientAudioMessagesCoroutine 处理音频消息队列
 func (h *ConnectionHandler) processClientAudioMessagesCoroutine() {
+	inputReady := true
 	for {
 		select {
 		case <-h.stopChan:
 			return
-		case audioData := <-h.clientAudioQueue:
+		case input := <-h.clientAudioQueue:
 			if h.closeAfterChat {
 				continue
 			}
-			if err := h.providers.asr.AddAudio(audioData); err != nil {
+			if input.start != nil {
+				inputReady = true
+				if configurable, ok := h.providers.asr.(interface{ ConfigureInput(int, int, string) error }); ok {
+					if err := configurable.ConfigureInput(input.start.rate, input.start.channels, input.start.mode); err != nil {
+						inputReady = false
+						h.providers.asr.Reset()
+						h.LogError(fmt.Sprintf("配置 ASR 输入失败: %v", err))
+						continue
+					}
+				}
+				if prepared, ok := h.providers.asr.(interface{ Prepare(context.Context) error }); ok {
+					ctx := h.ctx
+					if ctx == nil {
+						ctx = context.Background()
+					}
+					if err := prepared.Prepare(ctx); err != nil {
+						h.LogError(fmt.Sprintf("预连接 ASR 失败: %v", err))
+					}
+				}
+				continue
+			}
+			if !inputReady {
+				continue
+			}
+			if input.end {
+				if err := h.providers.asr.SendLastAudio(nil); err != nil {
+					h.LogError(fmt.Sprintf("结束 ASR 输入失败: %v", err))
+				}
+				continue
+			}
+			if err := h.providers.asr.AddAudio(input.data); err != nil {
 				h.LogError(fmt.Sprintf("处理音频数据失败: %v", err))
 			}
 		}
@@ -597,7 +648,11 @@ func (h *ConnectionHandler) sendAudioMessageCoroutine() {
 		case <-h.stopChan:
 			return
 		case task := <-h.audioMessagesQueue:
-			h.sendAudioMessage(task.filepath, task.text, task.textIndex, task.round)
+			if task.stream != nil {
+				h.sendStreamingSpeech(task)
+			} else {
+				h.sendAudioMessage(task.filepath, task.text, task.textIndex, task.round)
+			}
 		}
 	}
 }
@@ -669,7 +724,7 @@ func (h *ConnectionHandler) QuitIntent(text string) bool {
 
 func (h *ConnectionHandler) quickReplyWakeUpWords(text string) bool {
 	// 检查是否包含唤醒词
-	if !h.config.QuickReply || h.talkRound != 1 {
+	if !h.config.QuickReply || h.currentRound() != 1 {
 		return false
 	}
 	if !utils.IsWakeUpWord(text) {
@@ -678,8 +733,8 @@ func (h *ConnectionHandler) quickReplyWakeUpWords(text string) bool {
 
 	repalyWords := h.config.QuickReplyWords
 	reply_text := utils.RandomSelectFromArray(repalyWords)
-	h.tts_last_text_index = 1 // 重置文本索引
-	h.SpeakAndPlay(reply_text, 1, h.talkRound)
+	h.tts_last_text_index.Store(int64(1)) // 重置文本索引
+	h.SpeakAndPlay(reply_text, 1, h.currentRound())
 
 	return true
 }
@@ -697,9 +752,10 @@ func (h *ConnectionHandler) handleChatMessage(ctx context.Context, text string) 
 	}
 
 	// 增加对话轮次
-	h.talkRound++
+	h.cancelSpeech()
+	h.talkRound.Add(1)
 	h.roundStartTime = time.Now()
-	currentRound := h.talkRound
+	currentRound := h.currentRound()
 	h.LogInfo(fmt.Sprintf("[对话] [轮次 %d] 开始新的对话轮次", currentRound))
 
 	// 普通文本消息处理流程
@@ -738,11 +794,15 @@ func (h *ConnectionHandler) handleChatMessage(ctx context.Context, text string) 
 }
 
 func (h *ConnectionHandler) genResponseByLLM(ctx context.Context, messages []providers.Message, round int) error {
+	h.beginSpeechGeneration(round)
+	defer h.endSpeechGeneration(round)
+	ctx, releaseGeneration := h.newGenerationContext(ctx)
+	defer releaseGeneration()
 	defer func() {
 		if r := recover(); r != nil {
 			h.LogError(fmt.Sprintf("genResponseByLLM发生panic: %v", r))
 			errorMsg := "抱歉，处理您的请求时发生了错误"
-			h.tts_last_text_index = 1 // 重置文本索引
+			h.tts_last_text_index.Store(int64(1)) // 重置文本索引
 			h.SpeakAndPlay(errorMsg, 1, round)
 		}
 	}()
@@ -755,6 +815,11 @@ func (h *ConnectionHandler) genResponseByLLM(ctx context.Context, messages []pro
 	}
 	// 使用LLM生成回复
 	tools := h.functionRegister.GetAllFunctions()
+	// Compose per request so role/agent changes and history trimming cannot remove
+	// the catalog. Do not persist duplicated catalog text into short-term memory.
+	if h.mcpManager != nil {
+		messages = withSkillCatalog(messages, h.mcpManager.SkillCatalog())
+	}
 	responses, err := h.providers.llm.ResponseWithFunctions(ctx, h.sessionID, messages, tools)
 	if err != nil {
 		return fmt.Errorf("LLM生成回复失败: %v", err)
@@ -781,7 +846,7 @@ func (h *ConnectionHandler) genResponseByLLM(ctx context.Context, messages []pro
 		if response.Error != "" {
 			h.LogError(fmt.Sprintf("LLM响应错误: %s", response.Error))
 			errorMsg := "抱歉，服务暂时不可用，请稍后再试"
-			h.tts_last_text_index = 1 // 重置文本索引
+			h.tts_last_text_index.Store(int64(1)) // 重置文本索引
 			h.SpeakAndPlay(errorMsg, 1, round)
 			return fmt.Errorf("LLM响应错误: %s", response.Error)
 		}
@@ -812,7 +877,7 @@ func (h *ConnectionHandler) genResponseByLLM(ctx context.Context, messages []pro
 			if strings.Contains(content, "服务响应异常") {
 				h.LogError(fmt.Sprintf("检测到LLM服务异常: %s", content))
 				errorMsg := "抱歉，LLM服务暂时不可用，请稍后再试"
-				h.tts_last_text_index = 1 // 重置文本索引
+				h.tts_last_text_index.Store(int64(1)) // 重置文本索引
 				h.SpeakAndPlay(errorMsg, 1, round)
 				return fmt.Errorf("LLM服务异常")
 			}
@@ -841,7 +906,7 @@ func (h *ConnectionHandler) genResponseByLLM(ctx context.Context, messages []pro
 				} else {
 					h.LogInfo(fmt.Sprintf("[LLM] [分段 %d/%d] %s", textIndex, round, segment))
 				}
-				h.tts_last_text_index = textIndex
+				h.tts_last_text_index.Store(int64(textIndex))
 				err := h.SpeakAndPlay(segment, textIndex, round)
 				if err != nil {
 					h.LogError(fmt.Sprintf("播放LLM回复分段失败: %v", err))
@@ -894,14 +959,14 @@ func (h *ConnectionHandler) genResponseByLLM(ctx context.Context, messages []pro
 				}
 				// 判断result 是否是types.ActionResponse类型
 				if actionResult, ok := result.(types.ActionResponse); ok {
-					h.handleFunctionResult(actionResult, functionCallData, textIndex)
+					h.handleFunctionResult(ctx, actionResult, functionCallData, textIndex)
 				} else {
 					h.LogInfo(fmt.Sprintf("MCP函数调用结果: %v", result))
 					actionResult := types.ActionResponse{
 						Action: types.ActionTypeReqLLM, // 动作类型
 						Result: result,                 // 动作产生的结果
 					}
-					h.handleFunctionResult(actionResult, functionCallData, textIndex)
+					h.handleFunctionResult(ctx, actionResult, functionCallData, textIndex)
 				}
 
 			} else {
@@ -918,7 +983,7 @@ func (h *ConnectionHandler) genResponseByLLM(ctx context.Context, messages []pro
 		if remainingText != "" {
 			textIndex++
 			h.LogInfo(fmt.Sprintf("[LLM] [分段 剩余文本 %d/%d] %s", textIndex, round, remainingText))
-			h.tts_last_text_index = textIndex
+			h.tts_last_text_index.Store(int64(textIndex))
 			h.SpeakAndPlay(remainingText, textIndex, round)
 		}
 	} else {
@@ -975,7 +1040,21 @@ func (h *ConnectionHandler) addToolCallMessage(toolResultText string, functionCa
 	})
 }
 
-func (h *ConnectionHandler) handleFunctionResult(result types.ActionResponse, functionCallData map[string]interface{}, textIndex int) {
+// maxToolCallDepth 限制单轮内“工具结果 -> 再次请求 LLM”的递归次数，
+// 避免模型反复调用 skill/MCP 工具导致无限循环。
+const maxToolCallDepth = 5
+
+type toolDepthKey struct{}
+
+func nextToolDepth(ctx context.Context) (context.Context, bool) {
+	depth, _ := ctx.Value(toolDepthKey{}).(int)
+	if depth >= maxToolCallDepth {
+		return ctx, false
+	}
+	return context.WithValue(ctx, toolDepthKey{}, depth+1), true
+}
+
+func (h *ConnectionHandler) handleFunctionResult(ctx context.Context, result types.ActionResponse, functionCallData map[string]interface{}, textIndex int) {
 	switch result.Action {
 	case types.ActionTypeError:
 		h.LogError(fmt.Sprintf("函数调用错误: %v", result.Result))
@@ -994,7 +1073,16 @@ func (h *ConnectionHandler) handleFunctionResult(result types.ActionResponse, fu
 		text, ok := result.Result.(string)
 		if ok && len(text) > 0 {
 			h.addToolCallMessage(text, functionCallData)
-			h.genResponseByLLM(context.Background(), h.dialogueManager.GetLLMDialogue(), h.talkRound)
+			if ctx.Err() != nil {
+				return // 本轮已被打断
+			}
+			next, ok := nextToolDepth(ctx)
+			if !ok {
+				h.LogError(fmt.Sprintf("工具调用超过最大深度 %d，停止继续请求 LLM", maxToolCallDepth))
+				h.SystemSpeak("抱歉，这个请求处理步骤太多了，请换个说法再试")
+				return
+			}
+			h.genResponseByLLM(next, h.dialogueManager.GetLLMDialogue(), h.currentRound())
 
 		} else {
 			h.LogError(fmt.Sprintf("函数调用结果解析失败: %v", result.Result))
@@ -1006,6 +1094,9 @@ func (h *ConnectionHandler) handleFunctionResult(result types.ActionResponse, fu
 }
 
 func (h *ConnectionHandler) SystemSpeak(text string) error {
+	round := h.currentRound()
+	h.beginSpeechGeneration(round)
+	defer h.endSpeechGeneration(round)
 	if text == "" {
 		h.logger.Warn("SystemSpeak 收到空文本，无法合成语音")
 		return errors.New("收到空文本，无法合成语音")
@@ -1014,8 +1105,8 @@ func (h *ConnectionHandler) SystemSpeak(text string) error {
 	index := 0
 	for _, item := range texts {
 		index++
-		h.tts_last_text_index = index // 重置文本索引
-		h.SpeakAndPlay(item, index, h.talkRound)
+		h.tts_last_text_index.Store(int64(index)) // 重置文本索引
+		h.SpeakAndPlay(item, index, round)
 	}
 	return nil
 }
@@ -1041,6 +1132,7 @@ func (h *ConnectionHandler) processTTSQueueCoroutine() {
 func (h *ConnectionHandler) stopServerSpeak() {
 	h.LogInfo("[服务端] [语音] 停止说话")
 	atomic.StoreInt32(&h.serverVoiceStop, 1)
+	h.cancelSpeech()
 	h.cleanTTSAndAudioQueue(false)
 }
 
@@ -1071,14 +1163,24 @@ func (h *ConnectionHandler) deleteAudioFileIfNeeded(filepath string, reason stri
 
 // processTTSTask 处理单个TTS任务
 func (h *ConnectionHandler) processTTSTask(text string, textIndex int, round int) {
+	if h.speechObsolete(round) {
+		return
+	}
 	filepath := ""
+	streamQueued := false
 	defer func() {
-		h.audioMessagesQueue <- struct {
-			filepath  string
-			text      string
-			round     int
-			textIndex int
-		}{filepath, text, round, textIndex}
+		if streamQueued {
+			return
+		}
+		if h.speechObsolete(round) {
+			h.deleteAudioFileIfNeeded(filepath, "丢弃过期合成结果")
+			return
+		}
+		select {
+		case h.audioMessagesQueue <- audioMessage{filepath: filepath, text: text, round: round, textIndex: textIndex}:
+		case <-h.stopChan:
+			h.deleteAudioFileIfNeeded(filepath, "关闭连接")
+		}
 	}()
 
 	if utils.IsQuickReplyHit(text, h.config.QuickReplyWords) {
@@ -1099,9 +1201,26 @@ func (h *ConnectionHandler) processTTSTask(text string, textIndex int, round int
 		h.logger.Warn(fmt.Sprintf("[TTS] [警告] 收到空文本 index=%d", textIndex))
 		return
 	}
+	if streamer, ok := h.providers.tts.(providers.PCMStreamingTTS); ok && h.serverAudioSampleRate == 24000 && h.serverAudioChannels == 1 {
+		streamQueued = true
+		h.produceStreamingSpeech(streamer, text, textIndex, round)
+		return
+	}
 
 	// 生成语音文件
-	filepath, err := h.providers.tts.ToTTS(text)
+	ctx, release, ok := h.newSpeechContext(round)
+	if !ok {
+		return
+	}
+	defer release()
+	var err error
+	if contextual, ok := h.providers.tts.(interface {
+		ToTTSWithContext(context.Context, string) (string, error)
+	}); ok {
+		filepath, err = contextual.ToTTSWithContext(ctx, text)
+	} else {
+		filepath, err = h.providers.tts.ToTTS(text)
+	}
 	if err != nil {
 		h.LogError(fmt.Sprintf("TTS转换失败:text(%s) %v", text, err))
 		return
@@ -1133,14 +1252,9 @@ func (h *ConnectionHandler) processTTSTask(text string, textIndex int, round int
 
 // speakAndPlay 合成并播放语音
 func (h *ConnectionHandler) SpeakAndPlay(text string, textIndex int, round int) error {
-	defer func() {
-		// 将任务加入队列，不阻塞当前流程
-		h.ttsQueue <- struct {
-			text      string
-			round     int
-			textIndex int
-		}{text, round, textIndex}
-	}()
+	if h.speechObsolete(round) {
+		return context.Canceled
+	}
 
 	originText := text // 保存原始文本用于日志
 	text = utils.RemoveAllEmoji(text)
@@ -1156,18 +1270,30 @@ func (h *ConnectionHandler) SpeakAndPlay(text string, textIndex int, round int) 
 		return errors.New("服务端语音已停止，无法合成语音")
 	}
 
-	if len(text) > 255 {
+	if len([]rune(text)) > 255 {
 		h.logger.Warn(fmt.Sprintf("文本过长，超过255字符限制，截断合成语音: %s", text))
-		text = text[:255] // 截断文本
+		text = string([]rune(text)[:255])
 	}
-
-	return nil
+	select {
+	case h.ttsQueue <- struct {
+		text      string
+		round     int
+		textIndex int
+	}{text, round, textIndex}:
+		return nil
+	case <-h.stopChan:
+		return context.Canceled
+	}
 }
 
 func (h *ConnectionHandler) clearSpeakStatus() {
 	h.LogInfo("[服务端] [讲话状态] 已清除")
-	h.tts_last_text_index = -1
-	h.providers.asr.Reset() // 重置ASR状态
+	h.tts_last_text_index.Store(int64(-1))
+	// realtime 模式下用户可能在播报期间已开始下一句，重置会丢掉这段识别。
+	// 该模式由 OnAsrResult 在每句结束时自行重置。
+	if h.clientListenMode != "realtime" {
+		h.providers.asr.Reset() // 重置ASR状态
+	}
 }
 
 func (h *ConnectionHandler) closeOpusDecoder() {
@@ -1201,6 +1327,11 @@ clearAudioQueue:
 	for {
 		select {
 		case task := <-h.audioMessagesQueue:
+			if task.stream != nil {
+				task.stream.cancel()
+				go h.discardStreamingResult(task.stream)
+				continue
+			}
 			h.LogInfo(fmt.Sprintf(msgPrefix+"丢弃一个音频任务: %s", task.text))
 			// 根据配置删除被丢弃的音频文件
 			h.deleteAudioFileIfNeeded(task.filepath, msgPrefix+"丢弃音频任务时")
@@ -1216,6 +1347,7 @@ clearAudioQueue:
 func (h *ConnectionHandler) Close() {
 	h.closeOnce.Do(func() {
 		close(h.stopChan)
+		h.cancelSpeech()
 
 		h.closeOpusDecoder()
 		if h.providers.tts != nil {
@@ -1236,6 +1368,8 @@ func (h *ConnectionHandler) Close() {
 
 // genResponseByVLLM 使用VLLLM处理包含图片的消息
 func (h *ConnectionHandler) genResponseByVLLM(ctx context.Context, messages []providers.Message, imageData image.ImageData, text string, round int) error {
+	h.beginSpeechGeneration(round)
+	defer h.endSpeechGeneration(round)
 	h.logger.Info("开始生成VLLLM回复 %v", map[string]interface{}{
 		"text":          text,
 		"has_url":       imageData.URL != "",
@@ -1277,7 +1411,7 @@ func (h *ConnectionHandler) genResponseByVLLM(ctx context.Context, messages []pr
 		// 按标点符号分割
 		if segment, chars := utils.SplitAtLastPunctuation(currentText); chars > 0 {
 			textIndex++
-			h.tts_last_text_index = textIndex
+			h.tts_last_text_index.Store(int64(textIndex))
 			h.SpeakAndPlay(segment, textIndex, round)
 			processedChars += chars
 		}
@@ -1287,7 +1421,7 @@ func (h *ConnectionHandler) genResponseByVLLM(ctx context.Context, messages []pr
 	remainingText := utils.JoinStrings(responseMessage)[processedChars:]
 	if remainingText != "" {
 		textIndex++
-		h.tts_last_text_index = textIndex
+		h.tts_last_text_index.Store(int64(textIndex))
 		h.SpeakAndPlay(remainingText, textIndex, round)
 	}
 

@@ -21,6 +21,9 @@
 | 角色与声音 | 预设角色、预设声音与语音指令切换 |
 | 短期记忆 | 已绑定设备重连后可延续短期上下文；按设备与智能体隔离，支持在设备管理页清空 |
 | 扩展能力 | 本地 MCP、设备 MCP 与外部 Stdio MCP；可配置天气、地图等工具 |
+| 本地技能 | [Skill 注册与渐进式加载](docs/local-skills.md)：目录摘要、按需加载说明及参考资料 |
+| 阿里云 ASR | [百炼 Paraformer 实时语音识别](docs/aliyun-asr.md)：流式 PCM 输入、自动断句与手动多句汇总 |
+| 阿里云 TTS | [Qwen3-TTS 实时语音合成](docs/aliyun-tts.md)：音色选择与切换、PCM/Opus 边合成边播放及 WAV 录音 |
 | 设备接入 | OTA 接口、固件文件下载接口与 WebSocket 地址下发 |
 | 运维与数据 | 本地 SQLite 配置存储、日志、Swagger API 文档、Docker 运行方式 |
 

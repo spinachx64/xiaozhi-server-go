@@ -104,6 +104,19 @@ selected_module:
 
 # ASR配置
 ASR:
+  AliyunASR:
+    # 阿里云百炼 DashScope / Paraformer 实时识别（不是传统 NLS AppKey 接口）
+    type: dashscope
+    api_key: "" # 填写百炼 API Key；留空时读取 DASHSCOPE_API_KEY 环境变量
+    asr_url: wss://dashscope.aliyuncs.com/api-ws/v1/inference
+    model: paraformer-realtime-v2
+    format: pcm # 服务已将设备 Opus 解码为 16-bit 单声道 PCM
+    sample_rate: 16000 # 默认值；设备会话使用 hello 中的实际采样率
+    language_hints: [zh, en] # 仅 paraformer-realtime-v2 使用
+    semantic_punctuation_enabled: false # 对话优先使用低延迟 VAD 断句
+    max_sentence_silence: 300 # 断句静音阈值（200–6000ms），过短可能打断句中停顿
+    timeout_seconds: 30 # 建连、任务启动及读写空闲超时
+
   DoubaoASR:
     # 火山 流式语音识别大模型-小时版， https://console.volcengine.com/ark/region:ark+cn-beijing/tts/speechRecognition
     # 开通功能，有20小时免费额度
@@ -148,6 +161,29 @@ ASR:
     encoding: "raw"
 
 TTS:
+  AliyunTTS:
+    type: dashscope
+    api_key: "" # 百炼 API Key；留空使用 DASHSCOPE_API_KEY
+    url: wss://dashscope.aliyuncs.com/api-ws/v1/realtime
+    model: qwen3-tts-flash-realtime
+    voice: Cherry # 大小写敏感，使用下方 name；display_name 仅用于显示/语音切换
+    format: wav # 服务返回裸 PCM，本地补 WAV 头供现有播放链路使用
+    sample_rate: 24000
+    timeout_seconds: 60
+    # thinking: disabled
+    output_dir: tmp/
+    # 仅列出参考脚本已验证的音色；不是所有阿里云 TTS 模型通用的列表。
+    supported_voices:
+      - {name: Cherry, display_name: 芊悦, language: 普通话, sex: 女, description: "明快自然，适合日常聊天"}
+      - {name: Serena, display_name: 苏瑶, language: 普通话, sex: 女, description: "柔和亲切，适合轻声交流"}
+      - {name: Ethan, display_name: 晨煦, language: 普通话, sex: 男, description: "有活力的男声，略带北方口音"}
+      - {name: Chelsie, display_name: 千雪, language: 普通话, sex: 女, description: "偏二次元风格的年轻女声"}
+      - {name: Dylan, display_name: 北京-晓东, language: 北京话, sex: 男, description: "带北京口音的少年男声"}
+      - {name: Jada, display_name: 上海-阿珍, language: 上海话, sex: 女, description: "爽快的上海方言女声"}
+      - {name: Sunny, display_name: 四川-晴儿, language: 四川话, sex: 女, description: "亲切甜美的四川方言女声"}
+      - {name: Nofish, display_name: 不吃鱼, language: 普通话, sex: 男, description: "带平舌特点的个性男声"}
+      - {name: Katerina, display_name: 卡捷琳娜, language: 普通话, sex: 女, description: "成熟有韵律的女声"}
+
   # EdgeTTS 是微软的语音合成服务，免费使用，容易合成失败，并发未测试
   EdgeTTS:
     type: edge
@@ -261,6 +297,9 @@ TTS:
         },
       ]
 
+# LLM / VLLLM 的 api_key 支持直接密钥或显式环境变量引用 "${NAME}"；
+# 也可填写 env_key: NAME（优先于 api_key）。引用的变量缺失或为空时初始化失败。
+# 仅配置文件中的引用会被解析；智能体或后台填写的值一律按字面密钥处理。
 LLM:
   ChatGLMLLM:
     # 定义LLM API类型

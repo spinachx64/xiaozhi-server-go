@@ -708,7 +708,8 @@
     const seen = new Set();
     ttsProviders.forEach((provider) => {
       const config = provider.config || {};
-      const raw = config.supported_voices || config.surported_voices || config.supportedVoices || [];
+      const raw = config.supported_voices || config.surported_voices || config.supportedVoices ||
+        (config.type === 'dashscope' && (!config.model || config.model === 'qwen3-tts-flash-realtime') ? DASHSCOPE_TTS_VOICES : []);
       if (Array.isArray(raw)) {
         raw.forEach((item) => {
           const value = typeof item === 'string' ? item : item?.name;
@@ -1362,8 +1363,21 @@
     `;
   }
 
+  const DASHSCOPE_TTS_VOICES = [
+    ['Cherry', '芊悦', '普通话', '女', '明快自然，适合日常聊天'],
+    ['Serena', '苏瑶', '普通话', '女', '柔和亲切，适合轻声交流'],
+    ['Ethan', '晨煦', '普通话', '男', '有活力的男声，略带北方口音'],
+    ['Chelsie', '千雪', '普通话', '女', '偏二次元风格的年轻女声'],
+    ['Dylan', '北京-晓东', '北京话', '男', '带北京口音的少年男声'],
+    ['Jada', '上海-阿珍', '上海话', '女', '爽快的上海方言女声'],
+    ['Sunny', '四川-晴儿', '四川话', '女', '亲切甜美的四川方言女声'],
+    ['Nofish', '不吃鱼', '普通话', '男', '带平舌特点的个性男声'],
+    ['Katerina', '卡捷琳娜', '普通话', '女', '成熟有韵律的女声'],
+  ].map(([name, display_name, language, sex, description]) => ({ name, display_name, language, sex, description }));
+
   const PROVIDER_FIELDS = {
     ASR: {
+      dashscope: { label: '阿里云百炼 Paraformer', suggestedName: 'AliyunASR', fields: [['api_key', '百炼 API Key', '留空使用 DASHSCOPE_API_KEY', true], ['asr_url', 'WebSocket 地址', 'wss://dashscope.aliyuncs.com/api-ws/v1/inference', false, 'url', 'wss://dashscope.aliyuncs.com/api-ws/v1/inference'], ['model', '模型名称', 'paraformer-realtime-v2', false, 'text', 'paraformer-realtime-v2'], ['sample_rate', '默认采样率', '16000', false, 'number', 16000], ['max_sentence_silence', '断句静音阈值（毫秒）', '300', false, 'number', 300], ['timeout_seconds', '空闲超时（秒）', '30', false, 'number', 30]] },
       doubao: { label: '火山语音识别', fields: [['appid', '应用 ID', '例如：1234567890', true], ['access_token', '访问令牌', '填写火山控制台生成的令牌', true], ['output_dir', '临时文件目录', 'tmp/'], ['end_window_size', '结束静音时长（毫秒）', '300', false, 'number']] },
       deepgram: { label: 'Deepgram', fields: [['addr', '服务地址', 'wss://api.deepgram.com/v1/listen'], ['api_key', 'API 密钥', '填写 Deepgram API Key', true], ['lang', '识别语言', 'zh-CN'], ['output_dir', '临时文件目录', 'tmp/']] },
       gosherpa: { label: 'GoSherpa', fields: [['addr', '服务地址', 'ws://127.0.0.1:8848/asr']] },
@@ -1371,6 +1385,7 @@
       iflytek: { label: '讯飞语音识别', fields: [['appid', '应用 ID', '填写 APPID', true], ['api_key', 'API Key', '填写 API Key', true], ['api_secret', 'API Secret', '填写 API Secret', true], ['asr_url', '服务地址', 'wss://iat-api.xfyun.cn/v2/iat']] },
     },
     TTS: {
+      dashscope: { label: '阿里云百炼 Qwen3-TTS', suggestedName: 'AliyunTTS', fields: [['api_key', '百炼 API Key', '留空使用 DASHSCOPE_API_KEY', true], ['url', 'Realtime WebSocket 地址', 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime', false, 'url', 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'], ['model', '模型名称', 'qwen3-tts-flash-realtime', false, 'text', 'qwen3-tts-flash-realtime'], ['voice', '音色', 'Cherry', false, 'text', 'Cherry'], ['sample_rate', '采样率', '24000', false, 'number', 24000], ['timeout_seconds', '合成超时（秒）', '60', false, 'number', 60], ['output_dir', '临时文件目录', 'tmp/', false, 'text', 'tmp/']] },
       edge: { label: 'Microsoft Edge TTS', fields: [['voice', '音色', 'zh-CN-XiaoxiaoNeural'], ['output_dir', '临时文件目录', 'tmp/']] },
       doubao: { label: '火山语音合成', fields: [['appid', '应用 ID', '填写 APPID', true], ['token', '访问令牌', '填写 Access Token', true], ['cluster', '资源集群', '填写资源集群名称'], ['voice', '音色', 'zh_female_wanwanxiaohe_moon_bigtts'], ['output_dir', '临时文件目录', 'tmp/']] },
       gosherpa: { label: 'GoSherpa', fields: [['cluster', '服务地址', 'ws://127.0.0.1:8848/tts'], ['output_dir', '临时文件目录', 'tmp/']] },
@@ -1378,7 +1393,7 @@
       iflytek: { label: '讯飞语音合成', fields: [['appid', '应用 ID', '填写 APPID', true], ['token', 'API Key', '填写 API Key', true], ['cluster', 'API Secret', '填写 API Secret', true], ['voice', '音色', 'xiaoyan'], ['output_dir', '临时文件目录', 'tmp/']] },
     },
     LLM: {
-      openai: { label: 'OpenAI 兼容接口', fields: [['url', 'API 地址', 'https://api.example.com/v1'], ['api_key', 'API 密钥', '填写 API Key', true], ['model_name', '模型名称', '例如：gpt-4o-mini'], ['max_tokens', '最大输出 Token', '500', false, 'number']] },
+      openai: { label: 'OpenAI 兼容接口', fields: [['url', 'API 地址', 'https://api.example.com/v1'], ['api_key', 'API 密钥 / 环境变量名', 'API Key 或 QM_ENV_KEY 或 ${QM_ENV_KEY}', true], ['model_name', '模型名称', '例如：gpt-4o-mini'], ['max_tokens', '最大输出 Token', '500', false, 'number']] },
       ollama: { label: 'Ollama 本地模型', fields: [['url', 'Ollama 地址', 'http://127.0.0.1:11434'], ['model_name', '模型名称', '例如：qwen3:8b']] },
       dsh: { label: 'DSH Xiaozhi Bridge', suggestedName: 'DSHBridge', fields: [['url', 'Bridge WebSocket 地址', 'ws://127.0.0.1:17980/xiaozhi', false, 'url', 'ws://127.0.0.1:17980/xiaozhi'], ['api_key', 'Bridge 令牌', '与 XIAOZHI_BRIDGE_TOKEN 相同', true]] },
       doubao: { label: '火山方舟', fields: [['url', 'API 地址', 'https://ark.cn-beijing.volces.com/api/v3'], ['api_key', 'API 密钥', '填写 API Key', true], ['model_name', '模型名称', '填写模型端点 ID'], ['max_tokens', '最大输出 Token', '4000', false, 'number']] },
@@ -1481,12 +1496,26 @@
         jsonInput.value = prettyJson({ type: subType || Object.keys(definitions)[0] || 'openai' });
       }
       const configValue = currentConfig();
+      if (type === 'TTS' && subType === 'dashscope' &&
+          (!Object.hasOwn(configValue, 'supported_voices') || (Array.isArray(configValue.supported_voices) && configValue.supported_voices.length === 0)) &&
+          (!configValue.model || configValue.model === 'qwen3-tts-flash-realtime')) {
+        configValue.supported_voices = DASHSCOPE_TTS_VOICES.map((voice) => ({ ...voice }));
+        jsonInput.value = prettyJson(configValue);
+      }
       const fields = definition?.fields || [];
+      const dashscopeVoices = Array.isArray(configValue.supported_voices)
+        ? configValue.supported_voices.filter((voice) => voice && typeof voice.name === 'string') : [];
       byId('provider-config-fields').innerHTML = fields.length ? fields.map(([key, label, placeholder, secret, inputType, defaultValue]) => `
         <div class="field">
           <label for="provider-field-${escapeHtml(key)}">${escapeHtml(label)}</label>
           <div class="${secret ? 'input-with-button' : ''}">
-            <input id="provider-field-${escapeHtml(key)}" data-provider-config-field="${escapeHtml(key)}" type="${secret ? 'password' : (inputType || 'text')}" value="${escapeHtml(configValue[key] ?? defaultValue ?? '')}" placeholder="${escapeHtml(placeholder || '')}" ${['appid', 'access_token', 'api_key', 'api_secret', 'token', 'model_name', 'model', 'voice'].includes(key) || (subType === 'dsh' && key === 'url') ? 'required' : ''}>
+            ${type === 'TTS' && subType === 'dashscope' && key === 'voice' ? `
+            <select id="provider-field-voice" data-provider-config-field="voice" required>
+              ${configValue.voice && !dashscopeVoices.some((voice) => [voice.name, voice.display_name].includes(configValue.voice)) ? `<option value="${escapeHtml(configValue.voice)}" selected>未列入音色列表：${escapeHtml(configValue.voice)}</option>` : ''}
+              ${dashscopeVoices.map((voice) => `<option value="${escapeHtml(voice.name)}" ${[voice.name, voice.display_name].includes(configValue.voice || 'Cherry') ? 'selected' : ''}>${escapeHtml(voice.display_name || voice.name)} · ${escapeHtml(voice.name)}</option>`).join('')}
+            </select>` : `
+            <input id="provider-field-${escapeHtml(key)}" data-provider-config-field="${escapeHtml(key)}" type="${secret ? 'password' : (inputType || 'text')}" value="${escapeHtml(configValue[key] ?? defaultValue ?? '')}" placeholder="${escapeHtml(placeholder || '')}" ${((['appid', 'access_token', 'api_key', 'api_secret', 'token', 'model_name', 'model', 'voice'].includes(key) && !(key === 'api_key' && (subType === 'dashscope' || (type === 'LLM' && configValue.env_key)))) || (subType === 'dsh' && key === 'url')) ? 'required' : ''}>
+            `}
             ${secret ? `<button class="btn small" type="button" data-toggle-provider-secret aria-label="显示或隐藏${escapeHtml(label)}">显示</button>` : ''}
           </div>
         </div>
@@ -1506,7 +1535,10 @@
       configValue.type = effectiveSubType();
       qsa('[data-provider-config-field]', form).forEach((input) => {
         const value = input.value.trim();
-        if (!value) return;
+        if (!value) {
+          if (effectiveSubType() === 'dashscope' && input.dataset.providerConfigField === 'api_key') delete configValue.api_key;
+          return;
+        }
         configValue[input.dataset.providerConfigField] = input.type === 'number' ? Number(value) : value;
       });
       jsonInput.value = prettyJson(configValue);
@@ -1520,13 +1552,14 @@
     subTypeInput.addEventListener('change', () => { syncProviderJson(); renderProviderFields(false); });
     customSubTypeInput.addEventListener('input', syncProviderJson);
     renderProviderFields(false);
+    jsonInput.addEventListener('change', () => { if (parseJson(jsonInput.value, null)) renderProviderFields(false); });
     byId('provider-submit').addEventListener('click', async () => {
       if (!form.reportValidity()) return;
       const values = formValues(form);
       const type = provider?.type || values.type;
       const name = provider?.name || values.name;
       syncProviderJson();
-      const config = parseJson(values.configJson, null);
+      const config = parseJson(jsonInput.value, null);
       if (!config) {
         toast('配置 JSON 格式不正确', 'warning');
         return;

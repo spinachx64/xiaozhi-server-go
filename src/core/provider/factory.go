@@ -92,6 +92,7 @@ func NewLLMFactory(llmType string, config *configs.Config, logger *utils.Logger)
 				ModelName:   llmCfg.ModelName,
 				BaseURL:     llmCfg.BaseURL,
 				APIKey:      llmCfg.APIKey,
+				EnvKey:      llmCfg.EnvKey,
 				Temperature: llmCfg.Temperature,
 				MaxTokens:   llmCfg.MaxTokens,
 				TopP:        llmCfg.TopP,
@@ -108,18 +109,8 @@ func NewTTSFactory(ttsType string, config *configs.Config, logger *utils.Logger)
 		return &ProviderFactory{
 			Name:         ttsType,
 			providerType: "tts",
-			config: &tts.Config{
-				Name:            ttsType,
-				Type:            ttsCfg.Type,
-				Voice:           ttsCfg.Voice,
-				Format:          ttsCfg.Format,
-				OutputDir:       ttsCfg.OutputDir,
-				AppID:           ttsCfg.AppID,
-				Token:           ttsCfg.Token,
-				Cluster:         ttsCfg.Cluster,
-				SupportedVoices: ttsCfg.SupportedVoices,
-			},
-			logger: logger,
+			config:       tts.FromConfig(ttsType, ttsCfg),
+			logger:       logger,
 			params: map[string]interface{}{
 				"delete_audio": config.DeleteAudio,
 			},

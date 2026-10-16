@@ -26,12 +26,18 @@ func Create(name string, vlllmConfig *configs.VLLMConfig, logger *utils.Logger) 
 		return nil, fmt.Errorf("未知的VLLLM提供者: %s", name)
 	}
 
+	// 运行时解析密钥引用，不回写原始配置。
+	apiKey, err := configs.ResolveAPIKey(vlllmConfig.APIKey, vlllmConfig.EnvKey)
+	if err != nil {
+		return nil, fmt.Errorf("resolve VLLLM API key: %w", err)
+	}
+
 	// 转换配置格式
 	config := &Config{
 		Type:        vlllmConfig.Type,
 		ModelName:   vlllmConfig.ModelName,
 		BaseURL:     vlllmConfig.BaseURL,
-		APIKey:      vlllmConfig.APIKey,
+		APIKey:      apiKey,
 		Temperature: vlllmConfig.Temperature,
 		MaxTokens:   vlllmConfig.MaxTokens,
 		TopP:        vlllmConfig.TopP,

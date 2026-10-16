@@ -118,6 +118,11 @@ type VoiceInfo struct {
 
 // TTSConfig TTS配置结构
 type TTSConfig struct {
+	APIKey          string      `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	URL             string      `yaml:"url,omitempty" json:"url,omitempty"`
+	Model           string      `yaml:"model,omitempty" json:"model,omitempty"`
+	SampleRate      int         `yaml:"sample_rate,omitempty" json:"sample_rate,omitempty"`
+	TimeoutSeconds  int         `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
 	Type            string      `yaml:"type"             json:"type"`             // TTS类型
 	Voice           string      `yaml:"voice"            json:"voice"`            // 语音名称
 	Format          string      `yaml:"format"           json:"format"`           // 输出格式
@@ -130,14 +135,15 @@ type TTSConfig struct {
 
 // LLMConfig LLM配置结构
 type LLMConfig struct {
-	Type        string                 `yaml:"type"        json:"type"`        // LLM类型
-	ModelName   string                 `yaml:"model_name"  json:"model_name"`  // 模型名称
-	BaseURL     string                 `yaml:"url"         json:"url"`         // API地址
-	APIKey      string                 `yaml:"api_key"     json:"api_key"`     // API密钥
-	Temperature float64                `yaml:"temperature" json:"temperature"` // 温度参数
-	MaxTokens   int                    `yaml:"max_tokens"  json:"max_tokens"`  // 最大令牌数
-	TopP        float64                `yaml:"top_p"       json:"top_p"`       // TopP参数
-	Extra       map[string]interface{} `yaml:",inline"     json:"extra"`       // 额外配置
+	EnvKey      string                 `yaml:"env_key,omitempty" json:"env_key,omitempty"` // 显式环境变量名，优先于 api_key
+	Type        string                 `yaml:"type"        json:"type"`                    // LLM类型
+	ModelName   string                 `yaml:"model_name"  json:"model_name"`              // 模型名称
+	BaseURL     string                 `yaml:"url"         json:"url"`                     // API地址
+	APIKey      string                 `yaml:"api_key"     json:"api_key"`                 // API密钥
+	Temperature float64                `yaml:"temperature" json:"temperature"`             // 温度参数
+	MaxTokens   int                    `yaml:"max_tokens"  json:"max_tokens"`              // 最大令牌数
+	TopP        float64                `yaml:"top_p"       json:"top_p"`                   // TopP参数
+	Extra       map[string]interface{} `yaml:",inline"     json:"extra"`                   // 额外配置
 }
 
 // SecurityConfig 图片安全配置结构
@@ -157,6 +163,7 @@ type VLLMConfig struct {
 	ModelName   string                 `yaml:"model_name"  json:"model_name"`  // 模型名称，使用支持视觉的模型
 	BaseURL     string                 `yaml:"url"         json:"url"`         // API地址
 	APIKey      string                 `yaml:"api_key"     json:"api_key"`     // API密钥
+	EnvKey      string                 `yaml:"env_key,omitempty" json:"env_key,omitempty"` // 显式环境变量名，优先于 api_key
 	Temperature float64                `yaml:"temperature" json:"temperature"` // 温度参数
 	MaxTokens   int                    `yaml:"max_tokens"  json:"max_tokens"`  // 最大令牌数
 	TopP        float64                `yaml:"top_p"       json:"top_p"`       // TopP参数
@@ -293,6 +300,9 @@ func LoadProvidersFromDB(dbi ConfigDBInterface, cfg *Config) {
 }
 
 func CheckAndModifyConfig(cfg *Config) *Config {
+	for name, ttsConfig := range cfg.TTS {
+		cfg.TTS[name] = WithTTSDefaults(ttsConfig)
+	}
 	// 检查Cfg.LocalMCPFun全部小写并去除空格
 	if cfg.LocalMCPFun == nil {
 		cfg.LocalMCPFun = []LocalMCPFun{}

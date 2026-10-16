@@ -45,6 +45,18 @@ func NewDefaultInitConfig() *Config {
 
 	// 设置默认的ASR配置（与配置文件完全一致）
 	config.ASR = map[string]ASRConfig{
+		"AliyunASR": {
+			"type":                         "dashscope",
+			"api_key":                      "",
+			"asr_url":                      "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+			"model":                        "paraformer-realtime-v2",
+			"format":                       "pcm",
+			"sample_rate":                  16000,
+			"language_hints":               []string{"zh", "en"},
+			"semantic_punctuation_enabled": false,
+			"max_sentence_silence":         300,
+			"timeout_seconds":              30,
+		},
 		"DoubaoASR": {
 			"type":         "doubao",
 			"appid":        "你的appid",
@@ -55,6 +67,7 @@ func NewDefaultInitConfig() *Config {
 
 	// 设置默认的TTS配置（与配置文件完全一致）
 	config.TTS = map[string]TTSConfig{
+		"AliyunTTS": DefaultDashScopeTTS(),
 		"EdgeTTS": {
 			Type:      "edge",
 			Voice:     "zh-CN-XiaoxiaoNeural",
