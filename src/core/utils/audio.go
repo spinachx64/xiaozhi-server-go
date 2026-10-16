@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hajimehoshi/go-mp3"
 	opus "github.com/AnimeAIChat/opus"
+	"github.com/hajimehoshi/go-mp3"
 )
 
 // OpusDecoder 封装opus解码器
@@ -223,9 +223,8 @@ func SaveAudioToWavFile(
 		}
 	}
 
-	// 打开现有文件进行追加
-	file, err = os.OpenFile(fileName, os.O_WRONLY, 0o644)
-	// 写入音频数据
+	// Keep the established position (after the header, or at EOF for append).
+	// Reopening here reset the offset to zero and overwrote the first PCM bytes.
 	_, err = file.Write(data)
 	if err != nil {
 		return "", fmt.Errorf("写入数据失败: %v", err)
@@ -342,6 +341,9 @@ func ReadPCMDataFromWavFile(filePath string) ([]byte, error) {
 }
 
 func AudioToPCMData(audioFile string) ([][]byte, float64, error) {
+	if strings.EqualFold(filepath.Ext(audioFile), ".wav") {
+		return wavToPCM24k(audioFile)
+	}
 	file, err := os.Open(audioFile)
 	if err != nil {
 		return nil, 0, fmt.Errorf("打开音频文件失败: %v", err)
@@ -430,7 +432,7 @@ func AudioToOpusData(audioFile string) ([][]byte, float64, error) {
 	opusSampleRate := 24000
 	channels := 1
 
-	if strings.HasSuffix(audioFile, ".mp3") {
+	if strings.HasSuffix(audioFile, ".mp3") || strings.EqualFold(filepath.Ext(audioFile), ".wav") {
 		// 先将MP3转为PCM
 		pcmData, duration, err = AudioToPCMData(audioFile)
 		if err != nil {

@@ -15,6 +15,10 @@ type AsrEventListener interface {
 	OnAsrResult(result string, isFinalResult bool) bool
 }
 
+// AsrSpeechStartListener can interrupt playback on interim speech detection
+// without submitting unstable partial transcripts to the language model.
+type AsrSpeechStartListener interface{ OnAsrSpeechStart() }
+
 // ASRProvider 语音识别提供者接口
 type ASRProvider interface {
 	Provider
@@ -55,6 +59,12 @@ type TTSProvider interface {
 	ToTTS(text string) (string, error)
 
 	SetVoice(voice string) (error, string)
+}
+
+// PCMStreamingTTS is optional. Existing file-based providers remain compatible.
+// Deltas are raw little-endian PCM16 mono at 24kHz; the final path is a WAV file.
+type PCMStreamingTTS interface {
+	StreamPCM(ctx context.Context, text string, emit func([]byte) error) (string, error)
 }
 
 // LLMProvider 大语言模型提供者接口

@@ -2,11 +2,13 @@ package llm
 
 import (
 	"fmt"
+	"xiaozhi-server-go/src/configs"
 	"xiaozhi-server-go/src/core/types"
 )
 
 // Config LLM配置结构
 type Config struct {
+	EnvKey      string                 `yaml:"env_key,omitempty"`
 	Name        string                 `yaml:"name"` // LLM提供者名称
 	Type        string                 `yaml:"type"`
 	ModelName   string                 `yaml:"model_name"`
@@ -75,8 +77,12 @@ func Create(name string, config *Config) (Provider, error) {
 	if !ok {
 		return nil, fmt.Errorf("未知的LLM提供者: %s", name)
 	}
+	resolved, err := ResolveConfig(config)
+	if err != nil {
+		return nil, err
+	}
 
-	provider, err := factory(config)
+	provider, err := factory(resolved)
 	if err != nil {
 		return nil, fmt.Errorf("创建LLM提供者失败: %v", err)
 	}
@@ -86,4 +92,18 @@ func Create(name string, config *Config) (Provider, error) {
 	}
 
 	return provider, nil
+}
+
+// ResolveConfig returns a copy, leaving file/DB credential references intact.
+func ResolveConfig(config *Config) (*Config, error) {
+	if config == nil {
+		return nil, fmt.Errorf("LLM config is required")
+	}
+	copy := *config
+	key, err := configs.ResolveAPIKey(copy.APIKey, copy.EnvKey)
+	if err != nil {
+		return nil, fmt.Errorf("resolve LLM API key: %w", err)
+	}
+	copy.APIKey = key
+	return &copy, nil
 }

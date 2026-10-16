@@ -3,8 +3,10 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"xiaozhi-server-go/src/configs"
+	"xiaozhi-server-go/src/core/skill"
 	"xiaozhi-server-go/src/core/utils"
 
 	"github.com/sashabaranov/go-openai"
@@ -19,6 +21,7 @@ type LocalClient struct {
 	logger  *utils.Logger
 	handler map[string]HandlerFunc
 	cfg     *configs.Config
+	skills  *skill.Registry
 }
 
 func NewLocalClient(logger *utils.Logger, cfg *configs.Config) (*LocalClient, error) {
@@ -92,6 +95,16 @@ func (c *LocalClient) RegisterTools() {
 // Start 启动本地MCP客户端
 func (c *LocalClient) Start(ctx context.Context) error {
 	c.ctx = ctx
+	registry, errs := skill.Discover(filepath.Join(utils.GetProjectDir(), "skills"))
+	c.skills = registry
+	for _, err := range errs {
+		c.logger.Warn("Skill registration: %v", err)
+	}
+	if len(c.skills.List()) > 0 {
+		if err := c.registerSkillTools(); err != nil {
+			return err
+		}
+	}
 	c.RegisterTools()
 	c.logger.Info("Local MCP client started")
 	return nil

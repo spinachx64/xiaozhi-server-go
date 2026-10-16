@@ -201,7 +201,9 @@ func (s *DefaultUserService) testTTSProvider(ctx context.Context, name, subType 
 	if outputDir == "" {
 		outputDir = os.TempDir()
 	}
-	provider, err := tts.Create(subType, &tts.Config{Name: name, Type: subType, OutputDir: outputDir, Voice: providerConfig.Voice, Format: providerConfig.Format, AppID: providerConfig.AppID, Token: providerConfig.Token, Cluster: providerConfig.Cluster, SupportedVoices: providerConfig.SupportedVoices}, false)
+	ttsConfig := tts.FromConfig(name, providerConfig)
+	ttsConfig.Type, ttsConfig.OutputDir = subType, outputDir
+	provider, err := tts.Create(subType, ttsConfig, false)
 	if err != nil {
 		return liveProviderTestResult{}, fmt.Errorf("TTS Provider 初始化失败：%w", err)
 	}
@@ -227,7 +229,15 @@ type providerTTSResult struct {
 func collectTTSProviderTest(ctx context.Context, provider tts.Provider) (providerTestAudio, error) {
 	completed := make(chan providerTTSResult, 1)
 	go func() {
-		path, err := provider.ToTTS(ttsTestText)
+		var path string
+		var err error
+		if contextual, ok := provider.(interface {
+			ToTTSWithContext(context.Context, string) (string, error)
+		}); ok {
+			path, err = contextual.ToTTSWithContext(ctx, ttsTestText)
+		} else {
+			path, err = provider.ToTTS(ttsTestText)
+		}
 		completed <- providerTTSResult{path: path, err: err}
 	}()
 	var result providerTTSResult
@@ -296,7 +306,7 @@ func pcmToProviderTestWAV(pcm []byte) []byte {
 }
 
 func (s *DefaultUserService) testLLMProvider(ctx context.Context, name, subType string, config map[string]interface{}) (liveProviderTestResult, error) {
-	provider, err := llm.Create(subType, &llm.Config{Name: name, Type: subType, ModelName: stringConfig(config, "model_name"), BaseURL: stringConfig(config, "url"), APIKey: stringConfig(config, "api_key"), Extra: config})
+	provider, err := llm.Create(subType, &llm.Config{Name: name, Type: subType, ModelName: stringConfig(config, "model_name"), BaseURL: stringConfig(config, "url"), APIKey: stringConfig(config, "api_key"), EnvKey: stringConfig(config, "env_key"), Extra: config})
 	if err != nil {
 		return liveProviderTestResult{}, fmt.Errorf("LLM Provider 初始化失败：%w", err)
 	}

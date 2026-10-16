@@ -54,6 +54,66 @@ func TestMissingProviderTestFields(t *testing.T) {
 	}
 }
 
+func TestDashScopeEnvironmentCredentialValidation(t *testing.T) {
+	t.Setenv("DASHSCOPE_API_KEY", "")
+	config := map[string]interface{}{"type": "dashscope", "api_key": ""}
+	if missing := missingProviderTestFields("ASR", "dashscope", config); len(missing) != 1 || missing[0] != "api_key" {
+		t.Fatal(missing)
+	}
+	t.Setenv("DASHSCOPE_API_KEY", "environment-test-key")
+	if missing := missingProviderTestFields("ASR", "dashscope", config); len(missing) != 0 {
+		t.Fatal(missing)
+	}
+	resolved := withProviderEnvironment("ASR", "dashscope", config)
+	if resolved["api_key"] != "environment-test-key" || config["api_key"] != "" {
+		t.Fatal("environment credentials mutated persisted config")
+	}
+	config["api_key"] = "explicit-test-key"
+	if resolved := withProviderEnvironment("ASR", "dashscope", config); resolved["api_key"] != "explicit-test-key" {
+		t.Fatal("explicit key did not take precedence")
+	}
+}
+
+func TestDashScopeTTSFieldsAndEnvironment(t *testing.T) {
+	t.Setenv("DASHSCOPE_API_KEY", "")
+	config := map[string]interface{}{"type": "dashscope", "voice": "Cherry"}
+	if missing := missingProviderTestFields("TTS", "dashscope", config); len(missing) != 1 || missing[0] != "api_key" {
+		t.Fatal(missing)
+	}
+	t.Setenv("DASHSCOPE_API_KEY", "environment-test-key")
+	if missing := missingProviderTestFields("TTS", "dashscope", config); len(missing) != 0 {
+		t.Fatal(missing)
+	}
+	if _, exists := config["api_key"]; exists {
+		t.Fatal("environment key was written into config")
+	}
+	delete(config, "voice")
+	if missing := missingProviderTestFields("TTS", "dashscope", config); len(missing) != 1 || missing[0] != "voice" {
+		t.Fatal(missing)
+	}
+}
+
+func TestLLMEnvironmentReferenceValidation(t *testing.T) {
+	t.Setenv("CODEX_LLM_WEB_KEY_TEST", "sk-web-test-value")
+	config := map[string]interface{}{"type": "openai", "url": "https://example.test/v1", "model_name": "test", "api_key": "CODEX_LLM_WEB_KEY_TEST"}
+	if missing := missingProviderTestFields("LLM", "openai", config); len(missing) != 0 {
+		t.Fatal(missing)
+	}
+	resolved := withProviderEnvironment("LLM", "openai", config)
+	if resolved["api_key"] != "sk-web-test-value" || config["api_key"] != "CODEX_LLM_WEB_KEY_TEST" {
+		t.Fatal("validation mutated credential reference")
+	}
+	config["api_key"] = ""
+	config["env_key"] = "CODEX_LLM_WEB_KEY_TEST"
+	if missing := missingProviderTestFields("LLM", "openai", config); len(missing) != 0 {
+		t.Fatal(missing)
+	}
+	t.Setenv("CODEX_LLM_WEB_KEY_TEST", "")
+	if missing := missingProviderTestFields("LLM", "openai", config); len(missing) != 1 || !strings.Contains(missing[0], "CODEX_LLM_WEB_KEY_TEST") {
+		t.Fatal(missing)
+	}
+}
+
 func TestCollectLiveResponse(t *testing.T) {
 	t.Run("collects streamed response", func(t *testing.T) {
 		response := make(chan string, 2)

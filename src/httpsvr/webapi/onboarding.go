@@ -3,8 +3,10 @@ package webapi
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
+	"xiaozhi-server-go/src/configs"
 	"xiaozhi-server-go/src/configs/database"
 	"xiaozhi-server-go/src/models"
 
@@ -51,6 +53,7 @@ func (s *DefaultAdminService) onboardingProviderSetup() (string, string, []strin
 			continue
 		}
 		subType := strings.ToLower(strings.TrimSpace(stringConfig(providerConfig, "type")))
+		providerConfig = withProviderEnvironment(providerType, subType, providerConfig)
 		if subType == "" {
 			issues = append(issues, fmt.Sprintf("%s：Provider 缺少具体类型", providerType))
 			continue
@@ -85,11 +88,13 @@ func (s *DefaultAdminService) onboardingProviderSetup() (string, string, []strin
 func requiredProviderFields(providerType, subType string) []string {
 	required := map[string]map[string][]string{
 		"ASR": {
-			"doubao": {"appid", "access_token"}, "deepgram": {"addr", "api_key"}, "gosherpa": {"addr"},
+			"dashscope": {"api_key"},
+			"doubao":    {"appid", "access_token"}, "deepgram": {"addr", "api_key"}, "gosherpa": {"addr"},
 			"stepfun": {"api_key", "model", "voice"}, "iflytek": {"appid", "api_key", "api_secret"},
 		},
 		"TTS": {
-			"edge": {"voice"}, "doubao": {"appid", "token", "cluster", "voice"}, "gosherpa": {"cluster"},
+			"dashscope": {"api_key", "voice"},
+			"edge":      {"voice"}, "doubao": {"appid", "token", "cluster", "voice"}, "gosherpa": {"cluster"},
 			"deepgram": {"cluster", "token", "voice"}, "iflytek": {"appid", "token", "cluster"},
 		},
 		"LLM": {
@@ -99,6 +104,31 @@ func requiredProviderFields(providerType, subType string) []string {
 		},
 	}
 	return required[providerType][subType]
+}
+
+// Match the provider's environment fallback without writing secrets to DB.
+func withProviderEnvironment(kind, subType string, config map[string]interface{}) map[string]interface{} {
+	if kind == "LLM" {
+		key, err := configs.ResolveAPIKey(stringConfig(config, "api_key"), stringConfig(config, "env_key"))
+		if err != nil {
+			return config
+		} // Validation reports the reference error separately.
+		copy := make(map[string]interface{}, len(config)+1)
+		for name, value := range config {
+			copy[name] = value
+		}
+		copy["api_key"] = key
+		return copy
+	}
+	if (kind != "ASR" && kind != "TTS") || subType != "dashscope" || stringConfig(config, "api_key") != "" {
+		return config
+	}
+	copy := make(map[string]interface{}, len(config)+1)
+	for key, value := range config {
+		copy[key] = value
+	}
+	copy["api_key"] = strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY"))
+	return copy
 }
 
 func pendingOnboardingDeviceCount() int64 {

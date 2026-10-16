@@ -162,7 +162,7 @@ func (h *ConnectionHandler) mcp_handler_play_music(args interface{}) string {
 			return "没有找到名为" + songName + "的歌曲"
 		} else {
 			//h.SystemSpeak("这就为您播放音乐: " + songName)
-			h.sendAudioMessage(path, name, h.tts_last_text_index, h.talkRound)
+			h.sendAudioMessage(path, name, h.lastTextIndex(), h.currentRound())
 			return "正在播放音乐: " + name
 		}
 	} else {
@@ -239,7 +239,7 @@ func (h *ConnectionHandler) mcp_handler_take_photo(args interface{}) string {
 
 	if !visionResponse.Success {
 		h.logger.Error("拍照失败: %s", visionResponse.Message)
-		h.genResponseByLLM(context.Background(), h.dialogueManager.GetLLMDialogue(), h.talkRound)
+		h.genResponseByLLM(context.Background(), h.dialogueManager.GetLLMDialogue(), h.currentRound())
 		return "拍照失败: " + visionResponse.Message
 	}
 

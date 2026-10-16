@@ -129,6 +129,14 @@ func (m *Manager) GetAllToolsNames() []string {
 	return names
 }
 
+// SkillCatalog contains only metadata; full instructions are loaded via tools.
+func (m *Manager) SkillCatalog() string {
+	if m.localClient == nil || m.localClient.skills == nil {
+		return ""
+	}
+	return m.localClient.skills.Catalog()
+}
+
 // BindConnection 绑定连接到MCP Manager
 func (m *Manager) BindConnection(
 	conn Conn,
@@ -357,6 +365,12 @@ func convertConfig(cfg map[string]interface{}) (*Config, error) {
 				config.Env = append(config.Env, fmt.Sprintf("%s=%s", k, vStr))
 			}
 		}
+	}
+
+	if transport, ok := cfg["transport"].(string); ok {
+		config.Transport = transport
+	} else if kind, ok := cfg["type"].(string); ok {
+		config.Transport = kind
 	}
 
 	// SSE连接URL

@@ -11,6 +11,10 @@ import (
 
 // Config TTS配置结构
 type Config struct {
+	APIKey          string              `yaml:"api_key,omitempty"`
+	URL             string              `yaml:"url,omitempty"`
+	Model           string              `yaml:"model,omitempty"`
+	TimeoutSeconds  int                 `yaml:"timeout_seconds,omitempty"`
 	Name            string              `yaml:"name"` // TTS提供者名称
 	Type            string              `yaml:"type"`
 	OutputDir       string              `yaml:"output_dir"`
@@ -21,6 +25,16 @@ type Config struct {
 	Token           string              `yaml:"token"`
 	Cluster         string              `yaml:"cluster"`
 	SupportedVoices []configs.VoiceInfo `yaml:"supported_voices"` // 支持的语音列表
+}
+
+// FromConfig keeps all construction paths (device, voice switch and live test)
+// consistent when a provider adds configuration fields.
+func FromConfig(name string, cfg configs.TTSConfig) *Config {
+	cfg = configs.WithTTSDefaults(cfg)
+	return &Config{Name: name, Type: cfg.Type, APIKey: cfg.APIKey, URL: cfg.URL,
+		Model: cfg.Model, TimeoutSeconds: cfg.TimeoutSeconds, SampleRate: cfg.SampleRate,
+		Voice: cfg.Voice, Format: cfg.Format, OutputDir: cfg.OutputDir, AppID: cfg.AppID,
+		Token: cfg.Token, Cluster: cfg.Cluster, SupportedVoices: cfg.SupportedVoices}
 }
 
 // Provider TTS提供者接口

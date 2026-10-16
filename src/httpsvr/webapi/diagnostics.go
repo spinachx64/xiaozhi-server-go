@@ -67,6 +67,7 @@ func diagnoseASR(config *configs.Config) DiagnosticResult {
 	if name == "" || !ok {
 		return invalidConfigResult("ASR", "未选择有效的 ASR Provider")
 	}
+	provider = withProviderEnvironment("ASR", stringConfig(provider, "type"), provider)
 	if hasPlaceholderMap(provider, "appid", "access_token", "api_key", "api_secret") {
 		return invalidConfigResult("ASR", "所选 ASR Provider 的凭据未填写")
 	}
@@ -82,6 +83,10 @@ func diagnoseLLM(config *configs.Config) DiagnosticResult {
 	if name == "" || !ok {
 		return invalidConfigResult("LLM", "未选择有效的 LLM Provider")
 	}
+	resolvedKey, err := configs.ResolveAPIKey(provider.APIKey, provider.EnvKey)
+	if err != nil {
+		return invalidConfigResult("LLM", err.Error())
+	}
 	if provider.Type != "coze" && isPlaceholder(provider.ModelName) {
 		return invalidConfigResult("LLM", "所选 LLM Provider 未填写模型名称")
 	}
@@ -89,7 +94,7 @@ func diagnoseLLM(config *configs.Config) DiagnosticResult {
 		if !hasUsableCozeCredential(provider.Extra) {
 			return invalidConfigResult("LLM", "所选 Coze Provider 的凭据未填写")
 		}
-	} else if provider.Type != "ollama" && isPlaceholder(provider.APIKey) {
+	} else if provider.Type != "ollama" && isPlaceholder(resolvedKey) {
 		return invalidConfigResult("LLM", "所选 LLM Provider 的密钥未填写")
 	}
 	if isPlaceholder(provider.BaseURL) {
@@ -105,6 +110,12 @@ func diagnoseTTS(config *configs.Config) DiagnosticResult {
 		return invalidConfigResult("TTS", "未选择有效的 TTS Provider")
 	}
 	switch provider.Type {
+	case "dashscope":
+		resolved := withProviderEnvironment("TTS", "dashscope", map[string]interface{}{"api_key": provider.APIKey})
+		if isPlaceholder(stringConfig(resolved, "api_key")) {
+			return invalidConfigResult("TTS", "阿里云百炼 API Key 未填写")
+		}
+		return probeEndpoint("TTS", configs.WithTTSDefaults(provider).URL)
 	case "edge":
 		return DiagnosticResult{Name: "TTS", Status: "ready", Message: "Edge TTS 配置已选择；将在首次播报时建立服务连接"}
 	case "doubao", "iflytek":

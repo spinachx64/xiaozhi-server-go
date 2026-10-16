@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"xiaozhi-server-go/src/configs"
 	"xiaozhi-server-go/src/configs/database"
 
 	"github.com/gin-gonic/gin"
@@ -69,13 +70,21 @@ func stringConfig(config map[string]interface{}, key string) string {
 }
 
 func missingProviderTestFields(providerType, subType string, config map[string]interface{}) []string {
+	if providerType == "LLM" {
+		if _, err := configs.ResolveAPIKey(stringConfig(config, "api_key"), stringConfig(config, "env_key")); err != nil {
+			return []string{"api_key: " + err.Error()}
+		}
+	}
+	config = withProviderEnvironment(providerType, subType, config)
 	required := map[string]map[string][]string{
 		"ASR": {
-			"doubao": {"appid", "access_token"}, "deepgram": {"addr", "api_key"}, "gosherpa": {"addr"},
+			"dashscope": {"api_key"},
+			"doubao":    {"appid", "access_token"}, "deepgram": {"addr", "api_key"}, "gosherpa": {"addr"},
 			"stepfun": {"api_key", "model", "voice"}, "iflytek": {"appid", "api_key", "api_secret"},
 		},
 		"TTS": {
-			"edge": {"voice"}, "doubao": {"appid", "token", "cluster", "voice"}, "gosherpa": {"cluster"},
+			"dashscope": {"api_key", "voice"},
+			"edge":      {"voice"}, "doubao": {"appid", "token", "cluster", "voice"}, "gosherpa": {"cluster"},
 			"deepgram": {"cluster", "token", "voice"}, "iflytek": {"appid", "token", "cluster"},
 		},
 		"LLM": {
