@@ -16,6 +16,7 @@ import (
 	"xiaozhi-server-go/src/configs/database"
 	"xiaozhi-server-go/src/core/auth"
 	"xiaozhi-server-go/src/core/chat"
+	"xiaozhi-server-go/src/core/delegate"
 	"xiaozhi-server-go/src/core/function"
 	"xiaozhi-server-go/src/core/image"
 	"xiaozhi-server-go/src/core/mcp"
@@ -169,6 +170,8 @@ type ConnectionHandler struct {
 
 	mcpResultHandlers map[string]MCPResultHandler // MCP处理器映射
 	ctx               context.Context
+
+	delegates *delegate.Manager // 后台任务，未配置时为 nil
 }
 
 // NewConnectionHandler 创建新的连接处理器
@@ -559,6 +562,10 @@ func (h *ConnectionHandler) Handle(conn Connection) {
 		}
 		// 不需要重新初始化服务器，只需要确保连接相关的服务正常
 		h.LogInfo("[MCP] [绑定] 连接绑定完成，跳过重复初始化")
+	}
+
+	if detach := h.startDelegateDelivery(); detach != nil {
+		defer detach()
 	}
 
 	// 主消息循环

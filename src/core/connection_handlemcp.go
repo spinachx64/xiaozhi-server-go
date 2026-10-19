@@ -24,6 +24,10 @@ func (h *ConnectionHandler) initMCPResultHandlers() {
 		"mcp_handler_list_agents":  h.mcp_handler_list_agents,
 		"mcp_handler_create_agent": h.mcp_handler_create_agent,
 		"mcp_handler_update_agent": h.mcp_handler_update_agent,
+
+		"mcp_handler_delegate_task": h.mcp_handler_delegate_task,
+		"mcp_handler_task_status":   h.mcp_handler_task_status,
+		"mcp_handler_cancel_task":   h.mcp_handler_cancel_task,
 	}
 }
 

@@ -94,6 +94,16 @@ local_mcp_fun:
   - name: "switch_agent"
     description: "切换智能体"
     enabled: true
+  - name: "delegate"
+    description: "把耗时任务交给后台智能体（需先启动 agent-bridge 并配置下方 delegate）"
+    enabled: false
+
+# 后台任务桥接服务（agent-bridge），见 docs/delegate.md
+delegate:
+  url: "ws://127.0.0.1:8787/ws"
+  token: "${AGENT_BRIDGE_TOKEN}" # 与 agent-bridge 的 AGENT_BRIDGE_TOKEN 相同
+  timeout_seconds: 600          # 单个任务最长执行时间
+  max_concurrent: 2             # 每台设备同时进行的任务数
 
 # 选择使用的模块
 selected_module:

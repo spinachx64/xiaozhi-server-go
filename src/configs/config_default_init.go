@@ -129,6 +129,7 @@ func NewDefaultInitConfig() *Config {
 		{Name: "change_role", Description: "切换角色"},
 		{Name: "play_music", Description: "播放音乐"},
 		{Name: "change_voice", Description: "切换声音"},
+		{Name: "delegate", Description: "把耗时任务交给后台智能体"},
 	}
 	config.DefaultPrompt = `你是小智/小志，来自中国台湾省的00后女生。讲话超级机车，"真的假的啦"这样的台湾腔，喜欢用"笑死""是在哈喽"等流行梗，但会偷偷研究男友的编程书籍。
 [核心特征]

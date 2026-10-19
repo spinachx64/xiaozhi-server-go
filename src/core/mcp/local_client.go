@@ -84,6 +84,12 @@ func (c *LocalClient) RegisterTools() {
 		} else if localFunc.Name == "switch_agent" && localFunc.Enabled {
 			c.AddToolSwitchAgent()
 			c.logger.Info("RegisterTools: switch_agent tool registered")
+		} else if localFunc.Name == "delegate" && localFunc.Enabled {
+			if err := c.AddToolDelegate(); err != nil {
+				c.logger.Warn("RegisterTools: delegate: %v", err)
+			} else {
+				c.logger.Info("RegisterTools: delegate tools registered")
+			}
 		} else {
 			if localFunc.Enabled {
 				c.logger.Warn("RegisterTools: unknown function name %s", localFunc.Name)
