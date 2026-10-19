@@ -86,6 +86,18 @@ type Config struct {
 	VLLLM map[string]VLLMConfig `yaml:"VLLLM" json:"VLLLM"`
 
 	CMDExit []string `yaml:"CMD_exit" json:"CMD_exit"`
+
+	// Delegate 把耗时任务转交给外部智能体（agent-bridge），需在 local_mcp_fun 中启用 "delegate"。
+	Delegate DelegateConfig `yaml:"delegate" json:"delegate"`
+}
+
+// DelegateConfig 描述后台任务桥接服务。Token 支持 ${ENV} 引用，或改用 EnvKey 指定环境变量名。
+type DelegateConfig struct {
+	URL            string `yaml:"url"             json:"url"`
+	Token          string `yaml:"token"           json:"token"`
+	EnvKey         string `yaml:"env_key"         json:"env_key"`
+	TimeoutSeconds int    `yaml:"timeout_seconds" json:"timeout_seconds"` // 单个任务最长执行时间
+	MaxConcurrent  int    `yaml:"max_concurrent"  json:"max_concurrent"`  // 每台设备同时进行的任务数
 }
 
 // ErrInitialConfigCreated 表示首次启动已生成私有配置，用户需要填写必填项后再次启动。
@@ -415,6 +427,13 @@ func CheckAndModifyConfig(cfg *Config) *Config {
 			fmt.Println("已设置默认TTS为", name)
 			break
 		}
+	}
+
+	if cfg.Delegate.TimeoutSeconds <= 0 {
+		cfg.Delegate.TimeoutSeconds = 600
+	}
+	if cfg.Delegate.MaxConcurrent <= 0 {
+		cfg.Delegate.MaxConcurrent = 2
 	}
 
 	return cfg
